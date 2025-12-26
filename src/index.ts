@@ -147,8 +147,12 @@ export default {
 			return Response.redirect(authUrl.toString(), 302);
 		}
 
+
     if (url.pathname === "/backfill") {
-			ctx.waitUntil(syncData(env, 730)); // Request 2 years
+			const daysParam = url.searchParams.get('days');
+			const days = daysParam ? Number(daysParam) : 730;
+			const totalDays = Number.isFinite(days) && days > 0 ? Math.min(days, 3650) : 730;
+			ctx.waitUntil(syncData(env, totalDays));
 			return withCors(new Response('Backfill initiated.', { status: 202 }), origin);
     }
 
