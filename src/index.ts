@@ -122,7 +122,10 @@ export default {
 			callbackUrl.pathname = '/oauth/callback';
 			callbackUrl.search = '';
 
-			const scopes = (env.OURA_SCOPES ?? 'email personal daily heartrate workout tag session spo2')
+			const scopes = (
+				env.OURA_SCOPES ??
+				'email personal daily heartrate workout tag session spo2 stress heart_health ring_configuration'
+			)
 				.split(/[\s+]+/)
 				.filter(Boolean)
 				.join(' ');
@@ -376,6 +379,7 @@ async function loadOuraResourcesFromOpenApi(): Promise<OuraResource[]> {
 		if (typeof path !== 'string') continue;
 		if (!path.startsWith('/v2/usercollection/')) continue;
 		if (path.startsWith('/v2/sandbox/')) continue;
+		if (path.includes('{')) continue;
 		if (!methods || typeof methods !== 'object') continue;
 		const getDef = (methods as any).get;
 		if (!getDef) continue;
@@ -596,3 +600,18 @@ async function saveRawSingleton(env: Env, resource: string, payload: unknown) {
 	await stmt.bind(userId, resource, resource, JSON.stringify(payload), fetchedAt).run();
 }
 
+if (url.pathname === '/oauth/start') {
+			const userId = 'default';
+			const state = crypto.randomUUID();
+			const createdAt = Date.now();
+			await env.oura_db
+				.prepare('INSERT INTO oura_oauth_states (state, user_id, created_at) VALUES (?, ?, ?)')
+				.bind(state, userId, createdAt)
+				.run();
+			const scopes = (env.OURA_SCOPES ?? 'email personal daily heartrate workout tag session spo2 stress heart_health')
+				.split(/[\s+]+/)
+				.filter(Boolean)
+				.join(' ');
+			const url = `https://cloud.ouraring.com/oauth/authorize?response_type=code&client_id=${env.OURA_CLIENT_ID}&redirect_uri=${encodeURIComponent(env.OURA_REDIRECT_URI)}&scope=${encodeURIComponent(scopes)}&state=${state}`;
+			return withCors(Response.redirect(url, 302), origin);
+		}
