@@ -595,9 +595,7 @@ async function saveRawDocuments(env: Env, resource: string, documents: any[]) {
 	const userId = 'default';
 	const stmts = documents.map((d) => {
 		const documentId = String(d?.id ?? d?.day ?? crypto.randomUUID());
-		const day = typeof d?.day === 'string' ? d.day : null;
-		const startAt = typeof d?.start_datetime === 'string' ? d.start_datetime : typeof d?.start_time === 'string' ? d.start_time : null;
-		const endAt = typeof d?.end_datetime === 'string' ? d.end_datetime : typeof d?.end_time === 'string' ? d.end_time : null;
+		const { day, startAt, endAt } = extractDayStartEnd(d);
 		return baseStmt.bind(userId, resource, documentId, JSON.stringify(d), day, startAt, endAt, fetchedAt);
 	});
 
@@ -614,4 +612,34 @@ async function saveRawSingleton(env: Env, resource: string, payload: unknown) {
 			'ON CONFLICT(user_id, resource, document_id) DO UPDATE SET payload_json=excluded.payload_json, fetched_at=excluded.fetched_at'
 	);
 	await stmt.bind(userId, resource, resource, JSON.stringify(payload), fetchedAt).run();
+}
+
+function pickString(v: unknown): string | null {
+	return typeof v === 'string' && v.length ? v : null;
+}
+
+function extractDayStartEnd(d: any): { day: string | null; startAt: string | null; endAt: string | null } {
+	const startAt =
+		pickString(d?.start_datetime) ||
+		pickString(d?.start_time) ||
+		pickString(d?.bedtime_start) ||
+		pickString(d?.bedtime_start_datetime) ||
+		pickString(d?.timestamp) ||
+		pickString(d?.start) ||
+		null;
+
+	const endAt =
+		pickString(d?.end_datetime) ||
+		pickString(d?.end_time) ||
+		pickString(d?.bedtime_end) ||
+		pickString(d?.bedtime_end_datetime) ||
+		pickString(d?.end) ||
+		null;
+
+	const day =
+		pickString(d?.day) ||
+		(typeof startAt === 'string' && startAt.length >= 10 ? startAt.slice(0, 10) : null) ||
+		(typeof endAt === 'string' && endAt.length >= 10 ? endAt.slice(0, 10) : null);
+
+	return { day, startAt, endAt };
 }
