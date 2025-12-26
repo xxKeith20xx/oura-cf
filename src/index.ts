@@ -46,6 +46,13 @@ export default {
 			return withCors(new Response('Unauthorized', { status: 401 }), origin);
     }
 
+		if (!env.oura_db || typeof (env.oura_db as any).prepare !== 'function') {
+			return withCors(
+				Response.json({ error: 'D1 binding missing or misconfigured (oura_db)' }, { status: 500 }),
+				origin
+			);
+		}
+
     if (url.pathname === "/backfill") {
 			ctx.waitUntil(syncData(env, 730)); // Request 2 years
 			return withCors(new Response('Backfill initiated.', { status: 202 }), origin);
@@ -67,11 +74,21 @@ export default {
 			}
 
 			const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
-			const stmt = env.oura_db.prepare(
-				`SELECT * FROM daily_summaries ${whereSql} ORDER BY day ASC`
-			);
-			const out = args.length ? await stmt.bind(...args).all() : await stmt.all();
-			return withCors(Response.json(out.results), origin);
+			try {
+				const stmt = env.oura_db.prepare(
+					`SELECT * FROM daily_summaries ${whereSql} ORDER BY day ASC`
+				);
+				const out = args.length ? await stmt.bind(...args).all() : await stmt.all();
+				return withCors(Response.json(out.results), origin);
+			} catch (err) {
+				return withCors(
+					Response.json(
+						{ error: 'D1 query failed', details: String(err).slice(0, 500) },
+						{ status: 500 }
+					),
+					origin
+				);
+			}
 		}
 
 		if (url.pathname === '/api/sql' && request.method === 'POST') {
@@ -89,11 +106,21 @@ export default {
 				return withCors(new Response('Only read-only SQL is allowed', { status: 400 }), origin);
 			}
 
-			const result = await env.oura_db.prepare(sql).bind(...params).all();
-			return withCors(
-				Response.json({ results: result.results, meta: result.meta }),
-				origin
-			);
+			try {
+				const result = await env.oura_db.prepare(sql).bind(...params).all();
+				return withCors(
+					Response.json({ results: result.results, meta: result.meta }),
+					origin
+				);
+			} catch (err) {
+				return withCors(
+					Response.json(
+						{ error: 'D1 query failed', details: String(err).slice(0, 500) },
+						{ status: 500 }
+					),
+					origin
+				);
+			}
 		}
 
 		if (url.pathname === '/api/sql') {
@@ -101,10 +128,20 @@ export default {
 		}
 
     // Serve data to Grafana
-		const { results } = await env.oura_db
-			.prepare('SELECT * FROM daily_summaries ORDER BY day ASC')
-			.all();
-		return withCors(Response.json(results), origin);
+		try {
+			const { results } = await env.oura_db
+				.prepare('SELECT * FROM daily_summaries ORDER BY day ASC')
+				.all();
+			return withCors(Response.json(results), origin);
+		} catch (err) {
+			return withCors(
+				Response.json(
+					{ error: 'D1 query failed', details: String(err).slice(0, 500) },
+					{ status: 500 }
+				),
+				origin
+			);
+		}
   }
 };
 
