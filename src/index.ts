@@ -19,7 +19,7 @@ type OuraResource = {
 export default {
   // 1. Cron Trigger: Automated Daily Sync
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext) {
-    ctx.waitUntil(syncData(env, 3));
+		ctx.waitUntil(syncData(env, 3, 0));
   },
 
   // 2. HTTP Fetch: API and Manual Backfill
@@ -151,8 +151,15 @@ export default {
     if (url.pathname === "/backfill") {
 			const daysParam = url.searchParams.get('days');
 			const days = daysParam ? Number(daysParam) : 730;
-			const totalDays = Number.isFinite(days) && days > 0 ? Math.min(days, 3650) : 730;
-			ctx.waitUntil(syncData(env, totalDays));
+			const offsetParam = url.searchParams.get('offset_days') ?? url.searchParams.get('offsetDays');
+			const offsetRaw = offsetParam ? Number(offsetParam) : 0;
+			const offsetDays = Number.isFinite(offsetRaw) && offsetRaw >= 0 ? Math.min(offsetRaw, 3650) : 0;
+			const maxTotalDays = Math.max(0, 3650 - offsetDays);
+			const totalDays = Number.isFinite(days) && days > 0 ? Math.min(days, maxTotalDays) : 730;
+			if (totalDays <= 0) {
+				return withCors(Response.json({ error: 'Backfill window out of range' }, { status: 400 }), origin);
+			}
+			ctx.waitUntil(syncData(env, totalDays, offsetDays));
 			return withCors(new Response('Backfill initiated.', { status: 202 }), origin);
     }
 
@@ -243,7 +250,7 @@ export default {
   }
 };
 
-async function syncData(env: Env, totalDays: number) {
+async function syncData(env: Env, totalDays: number, offsetDays = 0) {
 	const resources = await loadOuraResourcesFromOpenApi();
 
 	for (const r of resources) {
@@ -255,10 +262,12 @@ async function syncData(env: Env, totalDays: number) {
 		const chunkDays = getChunkDaysForResource(r);
 
 		for (let i = 0; i < totalDays; i += chunkDays) {
-			const start = new Date(Date.now() - (i + chunkDays) * 86400000)
+			const start = new Date(Date.now() - (offsetDays + i + chunkDays) * 86400000)
 				.toISOString()
 				.split('T')[0];
-			const end = new Date(Date.now() - i * 86400000).toISOString().split('T')[0];
+			const end = new Date(Date.now() - (offsetDays + i) * 86400000)
+				.toISOString()
+				.split('T')[0];
 			await ingestResource(env, r, { startDate: start, endDate: end });
 		}
 	}
