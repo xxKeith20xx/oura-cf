@@ -1,6 +1,7 @@
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "oura-cf",
+	"preview_urls": false,
 	"main": "src/index.ts",
 	"compatibility_date": "2025-12-25",
 	"triggers": {

@@ -1,0 +1,337 @@
+{
+  "annotations": {"list": [{"builtIn": 1, "datasource": {"type": "grafana", "uid": "-- Grafana --"}, "enable": true, "hide": true, "iconColor": "rgba(0, 211, 255, 1)", "name": "Annotations & Alerts", "type": "dashboard"}]},
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {"collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0}, "id": 1000, "panels": [], "title": "Snapshot", "type": "row"},
+
+    {"type": "gauge", "title": "Readiness", "id": 1001, "gridPos": {"h": 5, "w": 4, "x": 0, "y": 1}, "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "ff8a5nfbpai9sc"},
+      "fieldConfig": {"defaults": {"min": 0, "max": 100}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "values": false}, "showThresholdLabels": false, "showThresholdMarkers": true},
+      "targets": [{"refId": "A", "format": "table", "parser": "backend", "source": "url", "type": "json", "root_selector": "results", "url": "https://oura-cf.keith20.workers.dev/api/sql",
+        "columns": [{"selector": "value", "text": "value", "type": "number"}],
+        "url_options": {"method": "POST", "body_type": "raw", "body_content_type": "application/json", "data": "{\"sql\":\"SELECT CAST(json_extract(payload_json,'$.score') AS INTEGER) AS value FROM oura_raw_documents WHERE resource='daily_readiness' ORDER BY day DESC LIMIT 1\",\"params\":[]}"}}
+      ]
+    },
+
+    {"type": "gauge", "title": "Sleep Score", "id": 1002, "gridPos": {"h": 5, "w": 4, "x": 4, "y": 1}, "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "ff8a5nfbpai9sc"},
+      "fieldConfig": {"defaults": {"min": 0, "max": 100}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "values": false}, "showThresholdLabels": false, "showThresholdMarkers": true},
+      "targets": [{"refId": "A", "format": "table", "parser": "backend", "source": "url", "type": "json", "root_selector": "results", "url": "https://oura-cf.keith20.workers.dev/api/sql",
+        "columns": [{"selector": "value", "text": "value", "type": "number"}],
+        "url_options": {"method": "POST", "body_type": "raw", "body_content_type": "application/json", "data": "{\"sql\":\"SELECT CAST(json_extract(payload_json,'$.score') AS INTEGER) AS value FROM oura_raw_documents WHERE resource='daily_sleep' ORDER BY day DESC LIMIT 1\",\"params\":[]}"}}
+      ]
+    },
+
+    {"type": "gauge", "title": "Activity Score", "id": 1003, "gridPos": {"h": 5, "w": 4, "x": 8, "y": 1}, "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "ff8a5nfbpai9sc"},
+      "fieldConfig": {"defaults": {"min": 0, "max": 100}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "values": false}, "showThresholdLabels": false, "showThresholdMarkers": true},
+      "targets": [{"refId": "A", "format": "table", "parser": "backend", "source": "url", "type": "json", "root_selector": "results", "url": "https://oura-cf.keith20.workers.dev/api/sql",
+        "columns": [{"selector": "value", "text": "value", "type": "number"}],
+        "url_options": {"method": "POST", "body_type": "raw", "body_content_type": "application/json", "data": "{\"sql\":\"SELECT CAST(json_extract(payload_json,'$.score') AS INTEGER) AS value FROM oura_raw_documents WHERE resource='daily_activity' ORDER BY day DESC LIMIT 1\",\"params\":[]}"}}
+      ]
+    },
+
+    {"type": "stat", "title": "Sleep Hours", "id": 1004, "gridPos": {"h": 5, "w": 4, "x": 12, "y": 1}, "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "ff8a5nfbpai9sc"},
+      "fieldConfig": {"defaults": {"unit": "h", "decimals": 1}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "values": false}},
+      "targets": [{"refId": "A", "format": "table", "parser": "backend", "source": "url", "type": "json", "root_selector": "results", "url": "https://oura-cf.keith20.workers.dev/api/sql",
+        "columns": [{"selector": "value", "text": "value", "type": "number"}],
+        "url_options": {"method": "POST", "body_type": "raw", "body_content_type": "application/json", "data": "{\"sql\":\"SELECT COALESCE( (SELECT CAST(COALESCE(json_extract(payload_json,'$.total_sleep_duration'), json_extract(payload_json,'$.total_sleep'), json_extract(payload_json,'$.contributors.total_sleep')) AS REAL)/3600.0 FROM oura_raw_documents WHERE resource='daily_sleep' ORDER BY day DESC LIMIT 1), (SELECT CAST(COALESCE(json_extract(payload_json,'$.total_sleep_duration'), json_extract(payload_json,'$.total_sleep_duration_seconds'), json_extract(payload_json,'$.duration')) AS REAL)/3600.0 FROM oura_raw_documents WHERE resource='sleep' ORDER BY end_at DESC LIMIT 1) ) AS value\",\"params\":[]}"}}
+      ]
+    },
+
+    {"type": "stat", "title": "Resting HR", "id": 1005, "gridPos": {"h": 5, "w": 4, "x": 16, "y": 1}, "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "ff8a5nfbpai9sc"},
+      "fieldConfig": {"defaults": {"unit": "bpm"}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "values": false}},
+      "targets": [{"refId": "A", "format": "table", "parser": "backend", "source": "url", "type": "json", "root_selector": "results", "url": "https://oura-cf.keith20.workers.dev/api/sql",
+        "columns": [{"selector": "value", "text": "value", "type": "number"}],
+        "url_options": {"method": "POST", "body_type": "raw", "body_content_type": "application/json", "data": "{\"sql\":\"SELECT COALESCE( (SELECT CAST(COALESCE(json_extract(payload_json,'$.lowest_resting_heart_rate'), json_extract(payload_json,'$.lowest_heart_rate'), json_extract(payload_json,'$.lowest_hr')) AS REAL) FROM oura_raw_documents WHERE resource='daily_sleep' ORDER BY day DESC LIMIT 1), (SELECT CAST(COALESCE(json_extract(payload_json,'$.lowest_heart_rate'), json_extract(payload_json,'$.lowest_resting_heart_rate'), json_extract(payload_json,'$.lowest_hr')) AS REAL) FROM oura_raw_documents WHERE resource='sleep' ORDER BY end_at DESC LIMIT 1), (SELECT CAST(COALESCE(json_extract(payload_json,'$.contributors.resting_heart_rate'), json_extract(payload_json,'$.resting_heart_rate')) AS REAL) FROM oura_raw_documents WHERE resource='daily_readiness' ORDER BY day DESC LIMIT 1) ) AS value\",\"params\":[]}"}}
+      ]
+    },
+
+    {"type": "stat", "title": "HRV", "id": 1006, "gridPos": {"h": 5, "w": 4, "x": 20, "y": 1}, "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "ff8a5nfbpai9sc"},
+      "fieldConfig": {"defaults": {"unit": "ms"}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "values": false}},
+      "targets": [{"refId": "A", "format": "table", "parser": "backend", "source": "url", "type": "json", "root_selector": "results", "url": "https://oura-cf.keith20.workers.dev/api/sql",
+        "columns": [{"selector": "value", "text": "value", "type": "number"}],
+        "url_options": {"method": "POST", "body_type": "raw", "body_content_type": "application/json", "data": "{\"sql\":\"SELECT COALESCE( (SELECT CAST(COALESCE(json_extract(payload_json,'$.average_hrv'), json_extract(payload_json,'$.hrv')) AS REAL) FROM oura_raw_documents WHERE resource='daily_sleep' ORDER BY day DESC LIMIT 1), (SELECT CAST(COALESCE(json_extract(payload_json,'$.average_hrv'), json_extract(payload_json,'$.hrv')) AS REAL) FROM oura_raw_documents WHERE resource='sleep' ORDER BY end_at DESC LIMIT 1), (SELECT CAST(COALESCE(json_extract(payload_json,'$.contributors.hrv_balance'), json_extract(payload_json,'$.hrv_balance'), json_extract(payload_json,'$.contributors.hrv')) AS REAL) FROM oura_raw_documents WHERE resource='daily_readiness' ORDER BY day DESC LIMIT 1) ) AS value\",\"params\":[]}"}}
+      ]
+    },
+
+    {"collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 6}, "id": 1100, "panels": [], "title": "Scores", "type": "row"},
+
+    {"type": "timeseries", "title": "Readiness / Sleep / Activity", "id": 1101, "gridPos": {"h": 8, "w": 24, "x": 0, "y": 7}, "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "ff8a5nfbpai9sc"},
+      "fieldConfig": {"defaults": {"min": 0, "max": 100}, "overrides": []},
+      "options": {"legend": {"showLegend": true, "placement": "bottom"}},
+      "targets": [{"refId": "A", "format": "table", "parser": "backend", "source": "url", "type": "json", "root_selector": "results", "url": "https://oura-cf.keith20.workers.dev/api/sql",
+        "columns": [
+          {"selector": "time", "text": "time", "type": "timestamp"},
+          {"selector": "readiness", "text": "readiness", "type": "number"},
+          {"selector": "sleep", "text": "sleep", "type": "number"},
+          {"selector": "activity", "text": "activity", "type": "number"}
+        ],
+        "url_options": {"method": "POST", "body_type": "raw", "body_content_type": "application/json", "data": "{\"sql\":\"SELECT r.day||'T00:00:00Z' AS time, CAST(json_extract(r.payload_json,'$.score') AS INTEGER) AS readiness, CAST(json_extract(s.payload_json,'$.score') AS INTEGER) AS sleep, CAST(json_extract(a.payload_json,'$.score') AS INTEGER) AS activity FROM oura_raw_documents r LEFT JOIN oura_raw_documents s ON r.day=s.day AND s.resource='daily_sleep' LEFT JOIN oura_raw_documents a ON r.day=a.day AND a.resource='daily_activity' WHERE r.resource='daily_readiness' AND r.day>=date('now','-2 years') ORDER BY r.day\",\"params\":[]}"}}
+      ]
+    },
+
+    {"type": "timeseries", "title": "Readiness (7d rolling avg)", "id": 1102, "gridPos": {"h": 8, "w": 12, "x": 0, "y": 15}, "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "ff8a5nfbpai9sc"},
+      "fieldConfig": {"defaults": {"min": 0, "max": 100}, "overrides": []},
+      "options": {"legend": {"showLegend": true, "placement": "bottom"}},
+      "targets": [{"refId": "A", "format": "table", "parser": "backend", "source": "url", "type": "json", "root_selector": "results", "url": "https://oura-cf.keith20.workers.dev/api/sql",
+        "columns": [{"selector": "time", "text": "time", "type": "timestamp"}, {"selector": "score", "text": "score", "type": "number"}, {"selector": "score_7d", "text": "score_7d", "type": "number"}],
+        "url_options": {"method": "POST", "body_type": "raw", "body_content_type": "application/json", "data": "{\"sql\":\"WITH d AS (SELECT day, CAST(json_extract(payload_json,'$.score') AS REAL) AS score FROM oura_raw_documents WHERE resource='daily_readiness' AND day>=date('now','-2 years')) SELECT day||'T00:00:00Z' AS time, score, AVG(score) OVER (ORDER BY day ROWS BETWEEN 6 PRECEDING AND CURRENT ROW) AS score_7d FROM d ORDER BY day\",\"params\":[]}"}}
+      ]
+    },
+
+    {"type": "timeseries", "title": "Sleep Score (7d rolling avg)", "id": 1103, "gridPos": {"h": 8, "w": 12, "x": 12, "y": 15}, "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "ff8a5nfbpai9sc"},
+      "fieldConfig": {"defaults": {"min": 0, "max": 100}, "overrides": []},
+      "options": {"legend": {"showLegend": true, "placement": "bottom"}},
+      "targets": [{"refId": "A", "format": "table", "parser": "backend", "source": "url", "type": "json", "root_selector": "results", "url": "https://oura-cf.keith20.workers.dev/api/sql",
+        "columns": [{"selector": "time", "text": "time", "type": "timestamp"}, {"selector": "score", "text": "score", "type": "number"}, {"selector": "score_7d", "text": "score_7d", "type": "number"}],
+        "url_options": {"method": "POST", "body_type": "raw", "body_content_type": "application/json", "data": "{\"sql\":\"WITH d AS (SELECT day, CAST(json_extract(payload_json,'$.score') AS REAL) AS score FROM oura_raw_documents WHERE resource='daily_sleep' AND day>=date('now','-2 years')) SELECT day||'T00:00:00Z' AS time, score, AVG(score) OVER (ORDER BY day ROWS BETWEEN 6 PRECEDING AND CURRENT ROW) AS score_7d FROM d ORDER BY day\",\"params\":[]}"}}
+      ]
+    },
+
+    {"collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 23}, "id": 1200, "panels": [], "title": "Sleep Deep Dive", "type": "row"},
+
+    {"type": "timeseries", "title": "Total Sleep Hours", "id": 1201, "gridPos": {"h": 8, "w": 8, "x": 0, "y": 24}, "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "ff8a5nfbpai9sc"},
+      "fieldConfig": {"defaults": {"unit": "h", "decimals": 1}, "overrides": []},
+      "targets": [{"refId": "A", "format": "table", "parser": "backend", "source": "url", "type": "json", "root_selector": "results", "url": "https://oura-cf.keith20.workers.dev/api/sql",
+        "columns": [{"selector": "time", "text": "time", "type": "timestamp"},{"selector": "hours", "text": "hours", "type": "number"}],
+        "url_options": {"method": "POST", "body_type": "raw", "body_content_type": "application/json", "data": "{\"sql\":\"WITH ds AS (SELECT day, CAST(COALESCE(json_extract(payload_json,'$.total_sleep_duration'), json_extract(payload_json,'$.total_sleep'), json_extract(payload_json,'$.contributors.total_sleep')) AS REAL)/3600.0 AS hours FROM oura_raw_documents WHERE resource='daily_sleep' AND day>=date('now','-2 years')), sl AS (SELECT day, AVG(CAST(COALESCE(json_extract(payload_json,'$.total_sleep_duration'), json_extract(payload_json,'$.total_sleep_duration_seconds'), json_extract(payload_json,'$.duration')) AS REAL))/3600.0 AS hours FROM oura_raw_documents WHERE resource='sleep' AND day>=date('now','-2 years') GROUP BY day), m AS (SELECT COALESCE(sl.day, ds.day) AS day, COALESCE(sl.hours, ds.hours) AS hours FROM sl LEFT JOIN ds ON sl.day=ds.day UNION SELECT ds.day, ds.hours FROM ds LEFT JOIN sl ON ds.day=sl.day WHERE sl.day IS NULL) SELECT day||'T00:00:00Z' AS time, hours FROM m ORDER BY day\",\"params\":[]}"}}
+      ]
+    },
+
+    {"type": "timeseries", "title": "Sleep Stages (hours)", "id": 1202, "gridPos": {"h": 8, "w": 16, "x": 8, "y": 24}, "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "ff8a5nfbpai9sc"},
+      "fieldConfig": {"defaults": {"unit": "h", "decimals": 1}, "overrides": []},
+      "options": {"legend": {"showLegend": true, "placement": "bottom"}},
+      "targets": [{"refId": "A", "format": "table", "parser": "backend", "source": "url", "type": "json", "root_selector": "results", "url": "https://oura-cf.keith20.workers.dev/api/sql",
+        "columns": [
+          {"selector": "time", "text": "time", "type": "timestamp"},
+          {"selector": "deep", "text": "deep", "type": "number"},
+          {"selector": "rem", "text": "rem", "type": "number"},
+          {"selector": "light", "text": "light", "type": "number"}
+        ],
+        "url_options": {"method": "POST", "body_type": "raw", "body_content_type": "application/json", "data": "{\"sql\":\"WITH ds AS (SELECT day, CAST(json_extract(payload_json,'$.deep_sleep_duration') AS REAL)/3600.0 AS deep, CAST(json_extract(payload_json,'$.rem_sleep_duration') AS REAL)/3600.0 AS rem, CAST(json_extract(payload_json,'$.light_sleep_duration') AS REAL)/3600.0 AS light FROM oura_raw_documents WHERE resource='daily_sleep' AND day>=date('now','-2 years')), sl AS (SELECT day, AVG(CAST(json_extract(payload_json,'$.deep_sleep_duration') AS REAL))/3600.0 AS deep, AVG(CAST(json_extract(payload_json,'$.rem_sleep_duration') AS REAL))/3600.0 AS rem, AVG(CAST(json_extract(payload_json,'$.light_sleep_duration') AS REAL))/3600.0 AS light FROM oura_raw_documents WHERE resource='sleep' AND day>=date('now','-2 years') GROUP BY day), m AS (SELECT COALESCE(sl.day, ds.day) AS day, COALESCE(sl.deep, ds.deep) AS deep, COALESCE(sl.rem, ds.rem) AS rem, COALESCE(sl.light, ds.light) AS light FROM sl LEFT JOIN ds ON sl.day=ds.day UNION SELECT ds.day, ds.deep, ds.rem, ds.light FROM ds LEFT JOIN sl ON ds.day=sl.day WHERE sl.day IS NULL) SELECT day||'T00:00:00Z' AS time, deep, rem, light FROM m ORDER BY day\",\"params\":[]}"}}
+      ]
+    },
+
+    {"type": "timeseries", "title": "Sleep Efficiency %", "id": 1203, "gridPos": {"h": 8, "w": 6, "x": 0, "y": 32}, "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "ff8a5nfbpai9sc"},
+      "fieldConfig": {"defaults": {"unit": "percent", "min": 0, "max": 100}, "overrides": []},
+      "targets": [{"refId": "A", "format": "table", "parser": "backend", "source": "url", "type": "json", "root_selector": "results", "url": "https://oura-cf.keith20.workers.dev/api/sql",
+        "columns": [{"selector": "time", "text": "time", "type": "timestamp"},{"selector": "value", "text": "value", "type": "number"}],
+        "url_options": {"method": "POST", "body_type": "raw", "body_content_type": "application/json", "data": "{\"sql\":\"WITH ds AS (SELECT day, CAST(COALESCE(json_extract(payload_json,'$.efficiency'), json_extract(payload_json,'$.sleep_efficiency'), json_extract(payload_json,'$.contributors.efficiency')) AS REAL) AS value FROM oura_raw_documents WHERE resource='daily_sleep' AND day>=date('now','-2 years')), sl AS (SELECT day, AVG(CAST(COALESCE(json_extract(payload_json,'$.efficiency'), json_extract(payload_json,'$.sleep_efficiency')) AS REAL)) AS value FROM oura_raw_documents WHERE resource='sleep' AND day>=date('now','-2 years') GROUP BY day), m AS (SELECT COALESCE(sl.day, ds.day) AS day, COALESCE(sl.value, ds.value) AS value FROM sl LEFT JOIN ds ON sl.day=ds.day UNION SELECT ds.day, ds.value FROM ds LEFT JOIN sl ON ds.day=sl.day WHERE sl.day IS NULL) SELECT day||'T00:00:00Z' AS time, value FROM m ORDER BY day\",\"params\":[]}"}}
+      ]
+    },
+
+    {"type": "timeseries", "title": "Sleep Latency (min)", "id": 1204, "gridPos": {"h": 8, "w": 6, "x": 6, "y": 32}, "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "ff8a5nfbpai9sc"},
+      "fieldConfig": {"defaults": {"unit": "m", "decimals": 0}, "overrides": []},
+      "targets": [{"refId": "A", "format": "table", "parser": "backend", "source": "url", "type": "json", "root_selector": "results", "url": "https://oura-cf.keith20.workers.dev/api/sql",
+        "columns": [{"selector": "time", "text": "time", "type": "timestamp"},{"selector": "value", "text": "value", "type": "number"}],
+        "url_options": {"method": "POST", "body_type": "raw", "body_content_type": "application/json", "data": "{\"sql\":\"WITH ds AS (SELECT day, CAST(json_extract(payload_json,'$.latency') AS REAL)/60.0 AS value FROM oura_raw_documents WHERE resource='daily_sleep' AND day>=date('now','-2 years')), sl AS (SELECT day, AVG(CAST(json_extract(payload_json,'$.latency') AS REAL))/60.0 AS value FROM oura_raw_documents WHERE resource='sleep' AND day>=date('now','-2 years') GROUP BY day), m AS (SELECT COALESCE(sl.day, ds.day) AS day, COALESCE(sl.value, ds.value) AS value FROM sl LEFT JOIN ds ON sl.day=ds.day UNION SELECT ds.day, ds.value FROM ds LEFT JOIN sl ON ds.day=sl.day WHERE sl.day IS NULL) SELECT day||'T00:00:00Z' AS time, value FROM m ORDER BY day\",\"params\":[]}"}}
+      ]
+    },
+
+    {"type": "timeseries", "title": "Avg HR (sleep)", "id": 1205, "gridPos": {"h": 8, "w": 6, "x": 12, "y": 32}, "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "ff8a5nfbpai9sc"},
+      "fieldConfig": {"defaults": {"unit": "bpm"}, "overrides": []},
+      "targets": [{"refId": "A", "format": "table", "parser": "backend", "source": "url", "type": "json", "root_selector": "results", "url": "https://oura-cf.keith20.workers.dev/api/sql",
+        "columns": [{"selector": "time", "text": "time", "type": "timestamp"},{"selector": "value", "text": "value", "type": "number"}],
+        "url_options": {"method": "POST", "body_type": "raw", "body_content_type": "application/json", "data": "{\"sql\":\"WITH ds AS (SELECT day, CAST(COALESCE(json_extract(payload_json,'$.average_heart_rate'), json_extract(payload_json,'$.avg_heart_rate'), json_extract(payload_json,'$.average_hr')) AS REAL) AS value FROM oura_raw_documents WHERE resource='daily_sleep' AND day>=date('now','-2 years')), sl AS (SELECT day, AVG(CAST(COALESCE(json_extract(payload_json,'$.average_heart_rate'), json_extract(payload_json,'$.avg_heart_rate'), json_extract(payload_json,'$.average_hr')) AS REAL)) AS value FROM oura_raw_documents WHERE resource='sleep' AND day>=date('now','-2 years') GROUP BY day), m AS (SELECT COALESCE(sl.day, ds.day) AS day, COALESCE(sl.value, ds.value) AS value FROM sl LEFT JOIN ds ON sl.day=ds.day UNION SELECT ds.day, ds.value FROM ds LEFT JOIN sl ON ds.day=sl.day WHERE sl.day IS NULL) SELECT day||'T00:00:00Z' AS time, value FROM m ORDER BY day\",\"params\":[]}"}}
+      ]
+    },
+
+    {"type": "timeseries", "title": "Avg HRV (sleep)", "id": 1206, "gridPos": {"h": 8, "w": 6, "x": 18, "y": 32}, "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "ff8a5nfbpai9sc"},
+      "fieldConfig": {"defaults": {"unit": "ms"}, "overrides": []},
+      "targets": [{"refId": "A", "format": "table", "parser": "backend", "source": "url", "type": "json", "root_selector": "results", "url": "https://oura-cf.keith20.workers.dev/api/sql",
+        "columns": [{"selector": "time", "text": "time", "type": "timestamp"},{"selector": "value", "text": "value", "type": "number"}],
+        "url_options": {"method": "POST", "body_type": "raw", "body_content_type": "application/json", "data": "{\"sql\":\"WITH ds AS (SELECT day, CAST(COALESCE(json_extract(payload_json,'$.average_hrv'), json_extract(payload_json,'$.hrv')) AS REAL) AS value FROM oura_raw_documents WHERE resource='daily_sleep' AND day>=date('now','-2 years')), sl AS (SELECT day, AVG(CAST(COALESCE(json_extract(payload_json,'$.average_hrv'), json_extract(payload_json,'$.hrv')) AS REAL)) AS value FROM oura_raw_documents WHERE resource='sleep' AND day>=date('now','-2 years') GROUP BY day), m AS (SELECT COALESCE(sl.day, ds.day) AS day, COALESCE(sl.value, ds.value) AS value FROM sl LEFT JOIN ds ON sl.day=ds.day UNION SELECT ds.day, ds.value FROM ds LEFT JOIN sl ON ds.day=sl.day WHERE sl.day IS NULL) SELECT day||'T00:00:00Z' AS time, value FROM m ORDER BY day\",\"params\":[]}"}}
+      ]
+    },
+
+    {"type": "timeseries", "title": "Respiratory Rate (sleep)", "id": 1207, "gridPos": {"h": 8, "w": 8, "x": 0, "y": 40}, "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "ff8a5nfbpai9sc"},
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 1}, "overrides": []},
+      "targets": [{"refId": "A", "format": "table", "parser": "backend", "source": "url", "type": "json", "root_selector": "results", "url": "https://oura-cf.keith20.workers.dev/api/sql",
+        "columns": [{"selector": "time", "text": "time", "type": "timestamp"},{"selector": "value", "text": "value", "type": "number"}],
+        "url_options": {"method": "POST", "body_type": "raw", "body_content_type": "application/json", "data": "{\"sql\":\"WITH ds AS (SELECT day, CAST(COALESCE(json_extract(payload_json,'$.average_breath'), json_extract(payload_json,'$.respiratory_rate')) AS REAL) AS value FROM oura_raw_documents WHERE resource='daily_sleep' AND day>=date('now','-2 years')), sl AS (SELECT day, AVG(CAST(COALESCE(json_extract(payload_json,'$.average_breath'), json_extract(payload_json,'$.respiratory_rate')) AS REAL)) AS value FROM oura_raw_documents WHERE resource='sleep' AND day>=date('now','-2 years') GROUP BY day), m AS (SELECT COALESCE(sl.day, ds.day) AS day, COALESCE(sl.value, ds.value) AS value FROM sl LEFT JOIN ds ON sl.day=ds.day UNION SELECT ds.day, ds.value FROM ds LEFT JOIN sl ON ds.day=sl.day WHERE sl.day IS NULL) SELECT day||'T00:00:00Z' AS time, value FROM m ORDER BY day\",\"params\":[]}"}}
+      ]
+    },
+
+    {"type": "timeseries", "title": "Restless Periods", "id": 1208, "gridPos": {"h": 8, "w": 8, "x": 8, "y": 40}, "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "ff8a5nfbpai9sc"},
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "targets": [{"refId": "A", "format": "table", "parser": "backend", "source": "url", "type": "json", "root_selector": "results", "url": "https://oura-cf.keith20.workers.dev/api/sql",
+        "columns": [{"selector": "time", "text": "time", "type": "timestamp"},{"selector": "value", "text": "value", "type": "number"}],
+        "url_options": {"method": "POST", "body_type": "raw", "body_content_type": "application/json", "data": "{\"sql\":\"WITH ds AS (SELECT day, CAST(json_extract(payload_json,'$.restless_periods') AS REAL) AS value FROM oura_raw_documents WHERE resource='daily_sleep' AND day>=date('now','-2 years')), sl AS (SELECT day, AVG(CAST(json_extract(payload_json,'$.restless_periods') AS REAL)) AS value FROM oura_raw_documents WHERE resource='sleep' AND day>=date('now','-2 years') GROUP BY day), m AS (SELECT COALESCE(sl.day, ds.day) AS day, COALESCE(sl.value, ds.value) AS value FROM sl LEFT JOIN ds ON sl.day=ds.day UNION SELECT ds.day, ds.value FROM ds LEFT JOIN sl ON ds.day=sl.day WHERE sl.day IS NULL) SELECT day||'T00:00:00Z' AS time, value FROM m ORDER BY day\",\"params\":[]}"}}
+      ]
+    },
+
+    {"type": "timeseries", "title": "Temperature Deviation", "id": 1209, "gridPos": {"h": 8, "w": 8, "x": 16, "y": 40}, "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "ff8a5nfbpai9sc"},
+      "fieldConfig": {"defaults": {"unit": "celsius", "decimals": 2}, "overrides": []},
+      "targets": [{"refId": "A", "format": "table", "parser": "backend", "source": "url", "type": "json", "root_selector": "results", "url": "https://oura-cf.keith20.workers.dev/api/sql",
+        "columns": [{"selector": "time", "text": "time", "type": "timestamp"},{"selector": "value", "text": "value", "type": "number"}],
+        "url_options": {"method": "POST", "body_type": "raw", "body_content_type": "application/json", "data": "{\"sql\":\"SELECT day||'T00:00:00Z' AS time, CAST(json_extract(payload_json,'$.temperature_deviation') AS REAL) AS value FROM oura_raw_documents WHERE resource='daily_readiness' AND day>=date('now','-2 years') ORDER BY day\",\"params\":[]}"}}
+      ]
+    },
+
+    {"collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 48}, "id": 1300, "panels": [], "title": "Activity", "type": "row"},
+
+    {"type": "timeseries", "title": "Steps", "id": 1301, "gridPos": {"h": 8, "w": 12, "x": 0, "y": 49}, "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "ff8a5nfbpai9sc"},
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "targets": [{"refId": "A", "format": "table", "parser": "backend", "source": "url", "type": "json", "root_selector": "results", "url": "https://oura-cf.keith20.workers.dev/api/sql",
+        "columns": [{"selector": "time", "text": "time", "type": "timestamp"},{"selector": "value", "text": "value", "type": "number"}],
+        "url_options": {"method": "POST", "body_type": "raw", "body_content_type": "application/json", "data": "{\"sql\":\"SELECT day||'T00:00:00Z' AS time, CAST(json_extract(payload_json,'$.steps') AS REAL) AS value FROM oura_raw_documents WHERE resource='daily_activity' AND day>=date('now','-2 years') ORDER BY day\",\"params\":[]}"}}
+      ]
+    },
+
+    {"type": "timeseries", "title": "Calories Burned", "id": 1302, "gridPos": {"h": 8, "w": 12, "x": 12, "y": 49}, "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "ff8a5nfbpai9sc"},
+      "fieldConfig": {"defaults": {"unit": "kcal"}, "overrides": []},
+      "targets": [{"refId": "A", "format": "table", "parser": "backend", "source": "url", "type": "json", "root_selector": "results", "url": "https://oura-cf.keith20.workers.dev/api/sql",
+        "columns": [{"selector": "time", "text": "time", "type": "timestamp"},{"selector": "value", "text": "value", "type": "number"}],
+        "url_options": {"method": "POST", "body_type": "raw", "body_content_type": "application/json", "data": "{\"sql\":\"SELECT day||'T00:00:00Z' AS time, CAST(json_extract(payload_json,'$.total_calories') AS REAL) AS value FROM oura_raw_documents WHERE resource='daily_activity' AND day>=date('now','-2 years') ORDER BY day\",\"params\":[]}"}}
+      ]
+    },
+
+    {"type": "timeseries", "title": "Active Calories", "id": 1303, "gridPos": {"h": 8, "w": 8, "x": 0, "y": 57}, "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "ff8a5nfbpai9sc"},
+      "fieldConfig": {"defaults": {"unit": "kcal"}, "overrides": []},
+      "targets": [{"refId": "A", "format": "table", "parser": "backend", "source": "url", "type": "json", "root_selector": "results", "url": "https://oura-cf.keith20.workers.dev/api/sql",
+        "columns": [{"selector": "time", "text": "time", "type": "timestamp"},{"selector": "value", "text": "value", "type": "number"}],
+        "url_options": {"method": "POST", "body_type": "raw", "body_content_type": "application/json", "data": "{\"sql\":\"SELECT day||'T00:00:00Z' AS time, CAST(json_extract(payload_json,'$.active_calories') AS REAL) AS value FROM oura_raw_documents WHERE resource='daily_activity' AND day>=date('now','-2 years') ORDER BY day\",\"params\":[]}"}}
+      ]
+    },
+
+    {"type": "timeseries", "title": "Walking Equivalent Distance", "id": 1304, "gridPos": {"h": 8, "w": 8, "x": 8, "y": 57}, "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "ff8a5nfbpai9sc"},
+      "fieldConfig": {"defaults": {"unit": "m"}, "overrides": []},
+      "targets": [{"refId": "A", "format": "table", "parser": "backend", "source": "url", "type": "json", "root_selector": "results", "url": "https://oura-cf.keith20.workers.dev/api/sql",
+        "columns": [{"selector": "time", "text": "time", "type": "timestamp"},{"selector": "value", "text": "value", "type": "number"}],
+        "url_options": {"method": "POST", "body_type": "raw", "body_content_type": "application/json", "data": "{\"sql\":\"SELECT day||'T00:00:00Z' AS time, CAST(json_extract(payload_json,'$.equivalent_walking_distance') AS REAL) AS value FROM oura_raw_documents WHERE resource='daily_activity' AND day>=date('now','-2 years') ORDER BY day\",\"params\":[]}"}}
+      ]
+    },
+
+    {"type": "timeseries", "title": "Activity Minutes (High/Med/Low)", "id": 1305, "gridPos": {"h": 8, "w": 8, "x": 16, "y": 57}, "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "ff8a5nfbpai9sc"},
+      "fieldConfig": {"defaults": {"unit": "m"}, "overrides": []},
+      "options": {"legend": {"showLegend": true, "placement": "bottom"}},
+      "targets": [{"refId": "A", "format": "table", "parser": "backend", "source": "url", "type": "json", "root_selector": "results", "url": "https://oura-cf.keith20.workers.dev/api/sql",
+        "columns": [
+          {"selector": "time", "text": "time", "type": "timestamp"},
+          {"selector": "high", "text": "high", "type": "number"},
+          {"selector": "medium", "text": "medium", "type": "number"},
+          {"selector": "low", "text": "low", "type": "number"}
+        ],
+        "url_options": {"method": "POST", "body_type": "raw", "body_content_type": "application/json", "data": "{\"sql\":\"SELECT day||'T00:00:00Z' AS time, CAST(json_extract(payload_json,'$.high_activity_time') AS REAL)/60.0 AS high, CAST(json_extract(payload_json,'$.medium_activity_time') AS REAL)/60.0 AS medium, CAST(json_extract(payload_json,'$.low_activity_time') AS REAL)/60.0 AS low FROM oura_raw_documents WHERE resource='daily_activity' AND day>=date('now','-2 years') ORDER BY day\",\"params\":[]}"}}
+      ]
+    },
+
+    {"collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 65}, "id": 1400, "panels": [], "title": "Workouts", "type": "row"},
+
+    {"type": "barchart", "title": "Workouts per Week", "id": 1401, "gridPos": {"h": 8, "w": 12, "x": 0, "y": 66}, "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "ff8a5nfbpai9sc"},
+      "targets": [{"refId": "A", "format": "table", "parser": "backend", "source": "url", "type": "json", "root_selector": "results", "url": "https://oura-cf.keith20.workers.dev/api/sql",
+        "columns": [{"selector": "week", "text": "week", "type": "string"}, {"selector": "workouts", "text": "workouts", "type": "number"}],
+        "url_options": {"method": "POST", "body_type": "raw", "body_content_type": "application/json", "data": "{\"sql\":\"SELECT strftime('%Y-%W', substr(start_at,1,10)) AS week, COUNT(*) AS workouts FROM oura_raw_documents WHERE resource='workout' AND start_at>=datetime('now','-2 years') GROUP BY week ORDER BY week\",\"params\":[]}"}}
+      ]
+    },
+
+    {"type": "barchart", "title": "Workout Duration per Week (hours)", "id": 1402, "gridPos": {"h": 8, "w": 12, "x": 12, "y": 66}, "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "ff8a5nfbpai9sc"},
+      "fieldConfig": {"defaults": {"unit": "h"}, "overrides": []},
+      "targets": [{"refId": "A", "format": "table", "parser": "backend", "source": "url", "type": "json", "root_selector": "results", "url": "https://oura-cf.keith20.workers.dev/api/sql",
+        "columns": [{"selector": "week", "text": "week", "type": "string"}, {"selector": "hours", "text": "hours", "type": "number"}],
+        "url_options": {"method": "POST", "body_type": "raw", "body_content_type": "application/json", "data": "{\"sql\":\"SELECT strftime('%Y-%W', substr(start_at,1,10)) AS week, SUM(COALESCE(CAST(json_extract(payload_json,'$.duration') AS REAL),0))/3600.0 AS hours FROM oura_raw_documents WHERE resource='workout' AND start_at>=datetime('now','-2 years') GROUP BY week ORDER BY week\",\"params\":[]}"}}
+      ]
+    },
+
+    {"type": "piechart", "title": "Workout Types (top 12)", "id": 1403, "gridPos": {"h": 8, "w": 8, "x": 0, "y": 74}, "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "ff8a5nfbpai9sc"},
+      "options": {"pieType": "donut"},
+      "targets": [{"refId": "A", "format": "table", "parser": "backend", "source": "url", "type": "json", "root_selector": "results", "url": "https://oura-cf.keith20.workers.dev/api/sql",
+        "columns": [{"selector": "activity", "text": "activity", "type": "string"}, {"selector": "count", "text": "count", "type": "number"}],
+        "url_options": {"method": "POST", "body_type": "raw", "body_content_type": "application/json", "data": "{\"sql\":\"SELECT COALESCE(json_extract(payload_json,'$.activity'),'unknown') AS activity, COUNT(*) AS count FROM oura_raw_documents WHERE resource='workout' AND start_at>=datetime('now','-2 years') GROUP BY activity ORDER BY count DESC LIMIT 12\",\"params\":[]}"}}
+      ]
+    },
+
+    {"type": "stat", "title": "Total Workouts (2y)", "id": 1404, "gridPos": {"h": 8, "w": 8, "x": 8, "y": 74}, "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "ff8a5nfbpai9sc"},
+      "targets": [{"refId": "A", "format": "table", "parser": "backend", "source": "url", "type": "json", "root_selector": "results", "url": "https://oura-cf.keith20.workers.dev/api/sql",
+        "columns": [{"selector": "value", "text": "value", "type": "number"}],
+        "url_options": {"method": "POST", "body_type": "raw", "body_content_type": "application/json", "data": "{\"sql\":\"SELECT COUNT(*) AS value FROM oura_raw_documents WHERE resource='workout' AND start_at>=datetime('now','-2 years')\",\"params\":[]}"}}
+      ]
+    },
+
+    {"type": "stat", "title": "Total Workout Hours (2y)", "id": 1405, "gridPos": {"h": 8, "w": 8, "x": 16, "y": 74}, "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "ff8a5nfbpai9sc"},
+      "fieldConfig": {"defaults": {"unit": "h", "decimals": 1}, "overrides": []},
+      "targets": [{"refId": "A", "format": "table", "parser": "backend", "source": "url", "type": "json", "root_selector": "results", "url": "https://oura-cf.keith20.workers.dev/api/sql",
+        "columns": [{"selector": "value", "text": "value", "type": "number"}],
+        "url_options": {"method": "POST", "body_type": "raw", "body_content_type": "application/json", "data": "{\"sql\":\"SELECT SUM(COALESCE(CAST(json_extract(payload_json,'$.duration') AS REAL),0))/3600.0 AS value FROM oura_raw_documents WHERE resource='workout' AND start_at>=datetime('now','-2 years')\",\"params\":[]}"}}
+      ]
+    },
+
+    {"collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 82}, "id": 1500, "panels": [], "title": "Stress & Recovery", "type": "row"},
+
+    {"type": "timeseries", "title": "High Stress Minutes", "id": 1501, "gridPos": {"h": 8, "w": 12, "x": 0, "y": 83}, "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "ff8a5nfbpai9sc"},
+      "fieldConfig": {"defaults": {"unit": "m"}, "overrides": []},
+      "targets": [{"refId": "A", "format": "table", "parser": "backend", "source": "url", "type": "json", "root_selector": "results", "url": "https://oura-cf.keith20.workers.dev/api/sql",
+        "columns": [{"selector": "time", "text": "time", "type": "timestamp"},{"selector": "value", "text": "value", "type": "number"}],
+        "url_options": {"method": "POST", "body_type": "raw", "body_content_type": "application/json", "data": "{\"sql\":\"SELECT day||'T00:00:00Z' AS time, CAST(json_extract(payload_json,'$.stress_high') AS REAL) AS value FROM oura_raw_documents WHERE resource='daily_stress' AND day>=date('now','-2 years') ORDER BY day\",\"params\":[]}"}}
+      ]
+    },
+
+    {"type": "timeseries", "title": "High Recovery Minutes", "id": 1502, "gridPos": {"h": 8, "w": 12, "x": 12, "y": 83}, "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "ff8a5nfbpai9sc"},
+      "fieldConfig": {"defaults": {"unit": "m"}, "overrides": []},
+      "targets": [{"refId": "A", "format": "table", "parser": "backend", "source": "url", "type": "json", "root_selector": "results", "url": "https://oura-cf.keith20.workers.dev/api/sql",
+        "columns": [{"selector": "time", "text": "time", "type": "timestamp"},{"selector": "value", "text": "value", "type": "number"}],
+        "url_options": {"method": "POST", "body_type": "raw", "body_content_type": "application/json", "data": "{\"sql\":\"SELECT day||'T00:00:00Z' AS time, CAST(json_extract(payload_json,'$.recovery_high') AS REAL) AS value FROM oura_raw_documents WHERE resource='daily_stress' AND day>=date('now','-2 years') ORDER BY day\",\"params\":[]}"}}
+      ]
+    },
+
+    {"type": "timeseries", "title": "Low Stress Minutes", "id": 1503, "gridPos": {"h": 8, "w": 12, "x": 0, "y": 91}, "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "ff8a5nfbpai9sc"},
+      "fieldConfig": {"defaults": {"unit": "m"}, "overrides": []},
+      "targets": [{"refId": "A", "format": "table", "parser": "backend", "source": "url", "type": "json", "root_selector": "results", "url": "https://oura-cf.keith20.workers.dev/api/sql",
+        "columns": [{"selector": "time", "text": "time", "type": "timestamp"},{"selector": "value", "text": "value", "type": "number"}],
+        "url_options": {"method": "POST", "body_type": "raw", "body_content_type": "application/json", "data": "{\"sql\":\"SELECT day||'T00:00:00Z' AS time, CAST(json_extract(payload_json,'$.stress_low') AS REAL) AS value FROM oura_raw_documents WHERE resource='daily_stress' AND day>=date('now','-2 years') ORDER BY day\",\"params\":[]}"}}
+      ]
+    },
+
+    {"type": "timeseries", "title": "Low Recovery Minutes", "id": 1504, "gridPos": {"h": 8, "w": 12, "x": 12, "y": 91}, "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "ff8a5nfbpai9sc"},
+      "fieldConfig": {"defaults": {"unit": "m"}, "overrides": []},
+      "targets": [{"refId": "A", "format": "table", "parser": "backend", "source": "url", "type": "json", "root_selector": "results", "url": "https://oura-cf.keith20.workers.dev/api/sql",
+        "columns": [{"selector": "time", "text": "time", "type": "timestamp"},{"selector": "value", "text": "value", "type": "number"}],
+        "url_options": {"method": "POST", "body_type": "raw", "body_content_type": "application/json", "data": "{\"sql\":\"SELECT day||'T00:00:00Z' AS time, CAST(json_extract(payload_json,'$.recovery_low') AS REAL) AS value FROM oura_raw_documents WHERE resource='daily_stress' AND day>=date('now','-2 years') ORDER BY day\",\"params\":[]}"}}
+      ]
+    },
+
+    {"collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 99}, "id": 1600, "panels": [], "title": "Insights", "type": "row"},
+
+    {"type": "barchart", "title": "Avg Readiness by Sleep Bucket (last 1y)", "id": 1601, "gridPos": {"h": 8, "w": 12, "x": 0, "y": 100}, "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "ff8a5nfbpai9sc"},
+      "targets": [{"refId": "A", "format": "table", "parser": "backend", "source": "url", "type": "json", "root_selector": "results", "url": "https://oura-cf.keith20.workers.dev/api/sql",
+        "columns": [{"selector": "bucket", "text": "bucket", "type": "string"}, {"selector": "avg_readiness", "text": "avg_readiness", "type": "number"}],
+        "url_options": {"method": "POST", "body_type": "raw", "body_content_type": "application/json", "data": "{\"sql\":\"WITH joined AS (SELECT r.day AS day, CAST(json_extract(r.payload_json,'$.score') AS REAL) AS readiness, CAST(json_extract(s.payload_json,'$.total_sleep_duration') AS REAL)/3600.0 AS sleep_h FROM oura_raw_documents r JOIN oura_raw_documents s ON r.day=s.day AND s.resource='daily_sleep' WHERE r.resource='daily_readiness' AND r.day>=date('now','-1 year')) SELECT CASE WHEN sleep_h<6 THEN '<6h' WHEN sleep_h<7 THEN '6-7h' WHEN sleep_h<8 THEN '7-8h' ELSE '8h+' END AS bucket, ROUND(AVG(readiness),1) AS avg_readiness FROM joined GROUP BY bucket ORDER BY bucket\",\"params\":[]}"}}
+      ]
+    },
+
+    {"type": "barchart", "title": "Avg Scores per Week (last 1y)", "id": 1602, "gridPos": {"h": 8, "w": 12, "x": 12, "y": 100}, "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "ff8a5nfbpai9sc"},
+      "options": {"legend": {"showLegend": true, "placement": "bottom"}},
+      "targets": [{"refId": "A", "format": "table", "parser": "backend", "source": "url", "type": "json", "root_selector": "results", "url": "https://oura-cf.keith20.workers.dev/api/sql",
+        "columns": [{"selector": "week", "text": "week", "type": "string"}, {"selector": "readiness", "text": "readiness", "type": "number"}, {"selector": "sleep", "text": "sleep", "type": "number"}, {"selector": "activity", "text": "activity", "type": "number"}],
+        "url_options": {"method": "POST", "body_type": "raw", "body_content_type": "application/json", "data": "{\"sql\":\"WITH r AS (SELECT day, CAST(json_extract(payload_json,'$.score') AS REAL) AS score FROM oura_raw_documents WHERE resource='daily_readiness' AND day>=date('now','-1 year')), s AS (SELECT day, CAST(json_extract(payload_json,'$.score') AS REAL) AS score FROM oura_raw_documents WHERE resource='daily_sleep' AND day>=date('now','-1 year')), a AS (SELECT day, CAST(json_extract(payload_json,'$.score') AS REAL) AS score FROM oura_raw_documents WHERE resource='daily_activity' AND day>=date('now','-1 year')) SELECT strftime('%Y-%W', r.day) AS week, ROUND(AVG(r.score),1) AS readiness, ROUND(AVG(s.score),1) AS sleep, ROUND(AVG(a.score),1) AS activity FROM r JOIN s ON r.day=s.day JOIN a ON r.day=a.day GROUP BY week ORDER BY week\",\"params\":[]}"}}
+      ]
+    },
+
+    {"collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 108}, "id": 1700, "panels": [], "title": "Data Coverage", "type": "row"},
+
+    {"type": "table", "title": "Coverage by Resource", "id": 1701, "gridPos": {"h": 10, "w": 24, "x": 0, "y": 109}, "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "ff8a5nfbpai9sc"},
+      "options": {"showHeader": true, "footer": {"enablePagination": true}},
+      "targets": [{"refId": "A", "format": "table", "parser": "backend", "source": "url", "type": "json", "root_selector": "results", "url": "https://oura-cf.keith20.workers.dev/api/sql",
+        "columns": [{"selector": "resource", "text": "resource", "type": "string"}, {"selector": "min_day", "text": "min_day", "type": "string"}, {"selector": "max_day", "text": "max_day", "type": "string"}, {"selector": "records", "text": "records", "type": "number"}],
+        "url_options": {"method": "POST", "body_type": "raw", "body_content_type": "application/json", "data": "{\"sql\":\"SELECT resource, MIN(COALESCE(day, substr(start_at,1,10))) AS min_day, MAX(COALESCE(day, substr(start_at,1,10))) AS max_day, COUNT(*) AS records FROM oura_raw_documents GROUP BY resource ORDER BY resource\",\"params\":[]}"}}
+      ]
+    }
+  ],
+  "schemaVersion": 42,
+  "tags": ["oura", "health"],
+  "templating": {"list": []},
+  "time": {"from": "now-2y", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Oura Health Dashboard (Full)",
+  "uid": "oura-health-full-v2",
+  "version": 1
+}
