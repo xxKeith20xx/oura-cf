@@ -13,7 +13,7 @@
 		{
 			"binding": "oura_db",
 			"database_name": "oura-db",
-			"database_id": "5672d3e9-19d4-4faf-b997-7e6afc1f34be",
+			"database_id": "782c3449-0a87-4ba8-a93a-bbb151749743",
 			"migrations_dir": "migrations"
 		}
 	]
