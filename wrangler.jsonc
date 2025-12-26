@@ -14,7 +14,7 @@
 			"binding": "oura_db",
 			"database_name": "oura-db",
 			"database_id": "5672d3e9-19d4-4faf-b997-7e6afc1f34be",
-			"remote": true
+			"migrations_dir": "migrations"
 		}
 	]
 }
