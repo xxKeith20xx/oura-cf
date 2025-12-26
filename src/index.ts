@@ -19,7 +19,7 @@ type OuraResource = {
 export default {
   // 1. Cron Trigger: Automated Daily Sync
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext) {
-		ctx.waitUntil(syncData(env, 3, 0));
+		ctx.waitUntil(syncData(env, 3, 0, null));
   },
 
   // 2. HTTP Fetch: API and Manual Backfill
@@ -159,7 +159,9 @@ export default {
 			if (totalDays <= 0) {
 				return withCors(Response.json({ error: 'Backfill window out of range' }, { status: 400 }), origin);
 			}
-			ctx.waitUntil(syncData(env, totalDays, offsetDays));
+			const resourcesParam = url.searchParams.get('resources');
+			const resourceFilter = parseResourceFilter(resourcesParam);
+			ctx.waitUntil(syncData(env, totalDays, offsetDays, resourceFilter));
 			return withCors(new Response('Backfill initiated.', { status: 202 }), origin);
     }
 
@@ -250,8 +252,16 @@ export default {
   }
 };
 
-async function syncData(env: Env, totalDays: number, offsetDays = 0) {
-	const resources = await loadOuraResourcesFromOpenApi();
+async function syncData(
+	env: Env,
+	totalDays: number,
+	offsetDays = 0,
+	resourceFilter: Set<string> | null = null
+) {
+	const resourcesAll = await loadOuraResourcesFromOpenApi();
+	const resources = resourceFilter
+		? resourcesAll.filter((r) => resourceFilter.has(r.resource))
+		: resourcesAll;
 
 	for (const r of resources) {
 		if (r.queryMode === 'none') {
@@ -271,6 +281,16 @@ async function syncData(env: Env, totalDays: number, offsetDays = 0) {
 			await ingestResource(env, r, { startDate: start, endDate: end });
 		}
 	}
+}
+
+function parseResourceFilter(raw: string | null): Set<string> | null {
+	if (!raw) return null;
+	const parts = raw
+		.split(',')
+		.map((s) => s.trim())
+		.filter(Boolean);
+	if (!parts.length) return null;
+	return new Set(parts);
 }
 
 function getChunkDaysForResource(r: OuraResource): number {
