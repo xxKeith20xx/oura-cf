@@ -1,7 +1,10 @@
 export interface Env {
 	oura_db: D1Database;
-  OURA_PAT: string;
-  GRAFANA_SECRET: string;
+	GRAFANA_SECRET: string;
+	OURA_CLIENT_ID?: string;
+	OURA_CLIENT_SECRET?: string;
+	OURA_SCOPES?: string;
+	OURA_PAT?: string;
 }
 
 type OuraQueryMode = 'none' | 'date' | 'datetime';
@@ -42,6 +45,59 @@ export default {
 			return withCors(Response.json({ ok: true }), origin);
 		}
 
+		if (url.pathname === '/oauth/callback') {
+			if (!env.oura_db || typeof (env.oura_db as any).prepare !== 'function') {
+				return withCors(
+					Response.json({ error: 'D1 binding missing or misconfigured (oura_db)' }, { status: 500 }),
+					origin
+				);
+			}
+
+			const err = url.searchParams.get('error');
+			if (err) {
+				return withCors(Response.json({ error: err }, { status: 400 }), origin);
+			}
+			const code = url.searchParams.get('code');
+			const state = url.searchParams.get('state');
+			if (!code || !state) {
+				return withCors(Response.json({ error: 'Missing code/state' }, { status: 400 }), origin);
+			}
+
+			const stateRow = await env.oura_db
+				.prepare('SELECT user_id, created_at FROM oura_oauth_states WHERE state = ?')
+				.bind(state)
+				.first();
+			if (!stateRow) {
+				return withCors(Response.json({ error: 'Invalid state' }, { status: 400 }), origin);
+			}
+
+			const createdAt = Number((stateRow as any).created_at);
+			if (!Number.isFinite(createdAt) || Date.now() - createdAt > 15 * 60_000) {
+				await env.oura_db
+					.prepare('DELETE FROM oura_oauth_states WHERE state = ?')
+					.bind(state)
+					.run();
+				return withCors(Response.json({ error: 'State expired' }, { status: 400 }), origin);
+			}
+
+			await env.oura_db
+				.prepare('DELETE FROM oura_oauth_states WHERE state = ?')
+				.bind(state)
+				.run();
+
+			const callbackUrl = new URL(request.url);
+			callbackUrl.search = '';
+			const token = await exchangeAuthorizationCodeForToken(env, code, callbackUrl.toString());
+			await upsertOauthToken(env, (stateRow as any).user_id ?? 'default', token);
+			return withCors(
+				new Response('OK', {
+					status: 200,
+					headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+				}),
+				origin
+			);
+		}
+
     if (auth !== `Bearer ${env.GRAFANA_SECRET}`) {
 			return withCors(new Response('Unauthorized', { status: 401 }), origin);
     }
@@ -51,6 +107,41 @@ export default {
 				Response.json({ error: 'D1 binding missing or misconfigured (oura_db)' }, { status: 500 }),
 				origin
 			);
+		}
+
+		if (url.pathname === '/oauth/start') {
+			const userId = 'default';
+			const state = crypto.randomUUID();
+			const createdAt = Date.now();
+			await env.oura_db
+				.prepare('INSERT INTO oura_oauth_states (state, user_id, created_at) VALUES (?, ?, ?)')
+				.bind(state, userId, createdAt)
+				.run();
+
+			const callbackUrl = new URL(request.url);
+			callbackUrl.pathname = '/oauth/callback';
+			callbackUrl.search = '';
+
+			const scopes = (env.OURA_SCOPES ?? 'email personal daily heartrate workout tag session spo2')
+				.split(/[\s+]+/)
+				.filter(Boolean)
+				.join(' ');
+
+			if (!env.OURA_CLIENT_ID) {
+				return withCors(
+					Response.json({ error: 'Missing OURA_CLIENT_ID secret' }, { status: 500 }),
+					origin
+				);
+			}
+
+			const authUrl = new URL('https://cloud.ouraring.com/oauth/authorize');
+			authUrl.searchParams.set('response_type', 'code');
+			authUrl.searchParams.set('client_id', env.OURA_CLIENT_ID);
+			authUrl.searchParams.set('redirect_uri', callbackUrl.toString());
+			authUrl.searchParams.set('scope', scopes);
+			authUrl.searchParams.set('state', state);
+
+			return Response.redirect(authUrl.toString(), 302);
 		}
 
     if (url.pathname === "/backfill") {
@@ -193,10 +284,16 @@ async function ingestResource(
 	let nextToken: string | null = null;
 	let page = 0;
 
+	const accessToken = await getOuraAccessToken(env).catch((err) => {
+		console.log('Failed to get Oura access token', String(err).slice(0, 500));
+		return null;
+	});
+	if (!accessToken) return;
+
 	while (true) {
 		const url = buildOuraUrlForResource(r, window, nextToken);
 		const res = await fetchWithRetry(url, {
-			headers: { Authorization: `Bearer ${env.OURA_PAT}` },
+			headers: { Authorization: `Bearer ${accessToken}` },
 		});
 
 		if (!res.ok) {
@@ -313,7 +410,126 @@ function isReadOnlySql(sql: string): boolean {
 	const normalized = stripLeadingSqlComments(sql).replace(/\s+/g, ' ').trim();
 	if (!/^(select|with)\b/i.test(normalized)) return false;
 	if (normalized.includes(';')) return false;
+	if (/\boura_oauth_tokens\b/i.test(normalized)) return false;
+	if (/\boura_oauth_states\b/i.test(normalized)) return false;
 	return !/\b(insert|update|delete|drop|alter|create|replace|vacuum|pragma|attach|detach)\b/i.test(normalized);
+}
+
+type OuraTokenResponse = {
+	access_token: string;
+	refresh_token?: string;
+	expires_in?: number;
+	scope?: string;
+	token_type?: string;
+};
+
+async function exchangeAuthorizationCodeForToken(
+	env: Env,
+	code: string,
+	redirectUri: string
+): Promise<OuraTokenResponse> {
+	if (!env.OURA_CLIENT_ID || !env.OURA_CLIENT_SECRET) {
+		throw new Error('Missing OURA_CLIENT_ID/OURA_CLIENT_SECRET');
+	}
+
+	const form = new URLSearchParams();
+	form.set('grant_type', 'authorization_code');
+	form.set('code', code);
+	form.set('redirect_uri', redirectUri);
+
+	const basic = btoa(`${env.OURA_CLIENT_ID}:${env.OURA_CLIENT_SECRET}`);
+	const res = await fetch('https://api.ouraring.com/oauth/token', {
+		method: 'POST',
+		headers: {
+			Authorization: `Basic ${basic}`,
+			'Content-Type': 'application/x-www-form-urlencoded',
+		},
+		body: form.toString(),
+	});
+	if (!res.ok) {
+		const text = await res.text().catch(() => '');
+		throw new Error(`Token exchange failed (${res.status}): ${text.slice(0, 500)}`);
+	}
+	const json = (await res.json().catch(() => null)) as any;
+	if (!json?.access_token || typeof json.access_token !== 'string') {
+		throw new Error('Token exchange response missing access_token');
+	}
+	return json as OuraTokenResponse;
+}
+
+async function refreshAccessToken(env: Env, refreshToken: string): Promise<OuraTokenResponse> {
+	if (!env.OURA_CLIENT_ID || !env.OURA_CLIENT_SECRET) {
+		throw new Error('Missing OURA_CLIENT_ID/OURA_CLIENT_SECRET');
+	}
+
+	const form = new URLSearchParams();
+	form.set('grant_type', 'refresh_token');
+	form.set('refresh_token', refreshToken);
+
+	const basic = btoa(`${env.OURA_CLIENT_ID}:${env.OURA_CLIENT_SECRET}`);
+	const res = await fetch('https://api.ouraring.com/oauth/token', {
+		method: 'POST',
+		headers: {
+			Authorization: `Basic ${basic}`,
+			'Content-Type': 'application/x-www-form-urlencoded',
+		},
+		body: form.toString(),
+	});
+	if (!res.ok) {
+		const text = await res.text().catch(() => '');
+		throw new Error(`Token refresh failed (${res.status}): ${text.slice(0, 500)}`);
+	}
+	const json = (await res.json().catch(() => null)) as any;
+	if (!json?.access_token || typeof json.access_token !== 'string') {
+		throw new Error('Token refresh response missing access_token');
+	}
+	return json as OuraTokenResponse;
+}
+
+async function upsertOauthToken(env: Env, userId: string, token: OuraTokenResponse): Promise<void> {
+	const expiresAt =
+		typeof token.expires_in === 'number' && Number.isFinite(token.expires_in)
+			? Date.now() + Math.max(0, token.expires_in - 60) * 1000
+			: null;
+
+	await env.oura_db
+		.prepare(
+			'INSERT INTO oura_oauth_tokens (user_id, access_token, refresh_token, expires_at, scope, token_type) VALUES (?, ?, ?, ?, ?, ?) ' +
+				'ON CONFLICT(user_id) DO UPDATE SET access_token=excluded.access_token, refresh_token=COALESCE(excluded.refresh_token, oura_oauth_tokens.refresh_token), expires_at=excluded.expires_at, scope=excluded.scope, token_type=excluded.token_type, updated_at=(strftime(\'%Y-%m-%dT%H:%M:%fZ\',\'now\'))'
+		)
+		.bind(
+			userId,
+			token.access_token,
+			token.refresh_token ?? null,
+			expiresAt,
+			token.scope ?? null,
+			token.token_type ?? null
+		)
+		.run();
+}
+
+async function getOuraAccessToken(env: Env): Promise<string> {
+	const userId = 'default';
+	const row = await env.oura_db
+		.prepare('SELECT access_token, refresh_token, expires_at FROM oura_oauth_tokens WHERE user_id = ?')
+		.bind(userId)
+		.first();
+
+	const accessToken = typeof (row as any)?.access_token === 'string' ? (row as any).access_token : null;
+	const refreshToken = typeof (row as any)?.refresh_token === 'string' ? (row as any).refresh_token : null;
+	const expiresAt = Number((row as any)?.expires_at);
+	const hasValidAccess =
+		accessToken && Number.isFinite(expiresAt) ? expiresAt > Date.now() + 60_000 : !!accessToken;
+
+	if (hasValidAccess && accessToken) return accessToken;
+	if (refreshToken) {
+		const refreshed = await refreshAccessToken(env, refreshToken);
+		await upsertOauthToken(env, userId, refreshed);
+		return refreshed.access_token;
+	}
+
+	if (env.OURA_PAT) return env.OURA_PAT;
+	throw new Error('No OAuth refresh token found. Visit /oauth/start to authorize.');
 }
 
 function stripLeadingSqlComments(sql: string): string {
