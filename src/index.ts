@@ -386,6 +386,7 @@ async function loadOuraResourcesFromOpenApi(): Promise<OuraResource[]> {
 	const spec = (await res.json().catch(() => null)) as any;
 	const paths = spec?.paths && typeof spec.paths === 'object' ? spec.paths : {};
 	const out: OuraResource[] = [];
+	const forceDateWindow = new Set(['sleep', 'sleep_time', 'workout']);
 
 	for (const [path, methods] of Object.entries(paths)) {
 		if (typeof path !== 'string') continue;
@@ -410,6 +411,9 @@ async function loadOuraResourcesFromOpenApi(): Promise<OuraResource[]> {
 		if (paramNames.has('start_datetime') || paramNames.has('end_datetime')) {
 			queryMode = 'datetime';
 		} else if (paramNames.has('start_date') || paramNames.has('end_date')) {
+			queryMode = 'date';
+		}
+		if (queryMode === 'none' && forceDateWindow.has(resource)) {
 			queryMode = 'date';
 		}
 
