@@ -245,13 +245,14 @@ export default {
 
 async function syncData(env: Env, totalDays: number) {
 	const resources = await loadOuraResourcesFromOpenApi();
-	const chunkDays = 90;
 
 	for (const r of resources) {
 		if (r.queryMode === 'none') {
 			await ingestResource(env, r, null);
 			continue;
 		}
+
+		const chunkDays = getChunkDaysForResource(r);
 
 		for (let i = 0; i < totalDays; i += chunkDays) {
 			const start = new Date(Date.now() - (i + chunkDays) * 86400000)
@@ -261,6 +262,13 @@ async function syncData(env: Env, totalDays: number) {
 			await ingestResource(env, r, { startDate: start, endDate: end });
 		}
 	}
+}
+
+function getChunkDaysForResource(r: OuraResource): number {
+	// Oura endpoint constraint: heartrate requires start/end datetime range <= 30 days.
+	// Use 29 days to stay safely under the limit.
+	if (r.resource === 'heartrate') return 29;
+	return 90;
 }
 
 async function saveToD1(env: Env, endpoint: string, data: any[]) {
