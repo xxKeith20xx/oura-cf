@@ -272,7 +272,8 @@ async function syncData(
 		const chunkDays = getChunkDaysForResource(r);
 
 		for (let i = 0; i < totalDays; i += chunkDays) {
-			const start = new Date(Date.now() - (offsetDays + i + chunkDays) * 86400000)
+			const windowDays = Math.min(chunkDays, totalDays - i);
+			const start = new Date(Date.now() - (offsetDays + i + windowDays) * 86400000)
 				.toISOString()
 				.split('T')[0];
 			const end = new Date(Date.now() - (offsetDays + i) * 86400000)
@@ -301,15 +302,226 @@ function getChunkDaysForResource(r: OuraResource): number {
 }
 
 async function saveToD1(env: Env, endpoint: string, data: any[]) {
-  // Mapping logic to insert/upsert data into D1 tables
-  // Example for readiness
-  if (endpoint === 'daily_readiness') {
+	// daily_readiness -> daily_summaries (readiness fields)
+	if (endpoint === 'daily_readiness') {
 		const stmt = env.oura_db.prepare(
-			"INSERT INTO daily_summaries (day, readiness_score) VALUES (?, ?) ON CONFLICT(day) DO UPDATE SET readiness_score=excluded.readiness_score"
+			`INSERT INTO daily_summaries (day, readiness_score, readiness_activity_balance, readiness_body_temperature, readiness_hrv_balance, readiness_previous_day_activity, readiness_previous_night_sleep, readiness_recovery_index, readiness_resting_heart_rate, readiness_sleep_balance, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+			ON CONFLICT(day) DO UPDATE SET
+				readiness_score=excluded.readiness_score,
+				readiness_activity_balance=excluded.readiness_activity_balance,
+				readiness_body_temperature=excluded.readiness_body_temperature,
+				readiness_hrv_balance=excluded.readiness_hrv_balance,
+				readiness_previous_day_activity=excluded.readiness_previous_day_activity,
+				readiness_previous_night_sleep=excluded.readiness_previous_night_sleep,
+				readiness_recovery_index=excluded.readiness_recovery_index,
+				readiness_resting_heart_rate=excluded.readiness_resting_heart_rate,
+				readiness_sleep_balance=excluded.readiness_sleep_balance,
+				updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`
 		);
-		await env.oura_db.batch(data.map((d) => stmt.bind(d.day, d.score)));
-  }
+		const stmts = data.map((d) => {
+			const c = d?.contributors ?? {};
+			return stmt.bind(
+				d.day,
+				toInt(d.score),
+				toInt(c.activity_balance),
+				toInt(c.body_temperature),
+				toInt(c.hrv_balance),
+				toInt(c.previous_day_activity),
+				toInt(c.previous_night),
+				toInt(c.recovery_index),
+				toInt(c.resting_heart_rate),
+				toInt(c.sleep_balance)
+			);
+		});
+		if (stmts.length) await env.oura_db.batch(stmts);
+	}
 
+	// daily_sleep -> daily_summaries (sleep fields)
+	if (endpoint === 'daily_sleep') {
+		const stmt = env.oura_db.prepare(
+			`INSERT INTO daily_summaries (day, sleep_score, sleep_deep_sleep, sleep_efficiency, sleep_latency, sleep_rem_sleep, sleep_restfulness, sleep_timing, sleep_total_sleep, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+			ON CONFLICT(day) DO UPDATE SET
+				sleep_score=excluded.sleep_score,
+				sleep_deep_sleep=excluded.sleep_deep_sleep,
+				sleep_efficiency=excluded.sleep_efficiency,
+				sleep_latency=excluded.sleep_latency,
+				sleep_rem_sleep=excluded.sleep_rem_sleep,
+				sleep_restfulness=excluded.sleep_restfulness,
+				sleep_timing=excluded.sleep_timing,
+				sleep_total_sleep=excluded.sleep_total_sleep,
+				updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`
+		);
+		const stmts = data.map((d) => {
+			const c = d?.contributors ?? {};
+			return stmt.bind(
+				d.day,
+				toInt(d.score),
+				toInt(c.deep_sleep),
+				toInt(c.efficiency),
+				toInt(c.latency),
+				toInt(c.rem_sleep),
+				toInt(c.restfulness),
+				toInt(c.timing),
+				toInt(c.total_sleep)
+			);
+		});
+		if (stmts.length) await env.oura_db.batch(stmts);
+	}
+
+	// daily_activity -> daily_summaries (activity fields)
+	if (endpoint === 'daily_activity') {
+		const stmt = env.oura_db.prepare(
+			`INSERT INTO daily_summaries (day, activity_score, activity_steps, activity_active_calories, activity_total_calories, activity_meet_daily_targets, activity_move_every_hour, activity_recovery_time, activity_stay_active, activity_training_frequency, activity_training_volume, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+			ON CONFLICT(day) DO UPDATE SET
+				activity_score=excluded.activity_score,
+				activity_steps=excluded.activity_steps,
+				activity_active_calories=excluded.activity_active_calories,
+				activity_total_calories=excluded.activity_total_calories,
+				activity_meet_daily_targets=excluded.activity_meet_daily_targets,
+				activity_move_every_hour=excluded.activity_move_every_hour,
+				activity_recovery_time=excluded.activity_recovery_time,
+				activity_stay_active=excluded.activity_stay_active,
+				activity_training_frequency=excluded.activity_training_frequency,
+				activity_training_volume=excluded.activity_training_volume,
+				updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`
+		);
+		const stmts = data.map((d) => {
+			const c = d?.contributors ?? {};
+			return stmt.bind(
+				d.day,
+				toInt(d.score),
+				toInt(d.steps),
+				toInt(d.active_calories),
+				toInt(d.total_calories),
+				toInt(c.meet_daily_targets),
+				toInt(c.move_every_hour),
+				toInt(c.recovery_time),
+				toInt(c.stay_active),
+				toInt(c.training_frequency),
+				toInt(c.training_volume)
+			);
+		});
+		if (stmts.length) await env.oura_db.batch(stmts);
+	}
+
+	// daily_stress -> daily_summaries (stress_index)
+	if (endpoint === 'daily_stress') {
+		const stmt = env.oura_db.prepare(
+			`INSERT INTO daily_summaries (day, stress_index, updated_at)
+			VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+			ON CONFLICT(day) DO UPDATE SET
+				stress_index=excluded.stress_index,
+				updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`
+		);
+		const stmts = data.map((d) => stmt.bind(d.day, toInt(d.stress_high ?? d.day_summary)));
+		if (stmts.length) await env.oura_db.batch(stmts);
+	}
+
+	// daily_resilience -> daily_summaries (resilience fields)
+	if (endpoint === 'daily_resilience') {
+		const stmt = env.oura_db.prepare(
+			`INSERT INTO daily_summaries (day, resilience_level, resilience_contributors_sleep, resilience_contributors_stress, updated_at)
+			VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+			ON CONFLICT(day) DO UPDATE SET
+				resilience_level=excluded.resilience_level,
+				resilience_contributors_sleep=excluded.resilience_contributors_sleep,
+				resilience_contributors_stress=excluded.resilience_contributors_stress,
+				updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`
+		);
+		const stmts = data.map((d) => {
+			const c = d?.contributors ?? {};
+			return stmt.bind(d.day, d.level ?? null, toInt(c.sleep_recovery), toInt(c.daytime_recovery));
+		});
+		if (stmts.length) await env.oura_db.batch(stmts);
+	}
+
+	// daily_spo2 -> daily_summaries (spo2 fields)
+	if (endpoint === 'daily_spo2') {
+		const stmt = env.oura_db.prepare(
+			`INSERT INTO daily_summaries (day, spo2_percentage, spo2_breathing_disturbance_index, updated_at)
+			VALUES (?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+			ON CONFLICT(day) DO UPDATE SET
+				spo2_percentage=excluded.spo2_percentage,
+				spo2_breathing_disturbance_index=excluded.spo2_breathing_disturbance_index,
+				updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`
+		);
+		const stmts = data.map((d) =>
+			stmt.bind(d.day, toReal(d.spo2_percentage?.average), toInt(d.breathing_disturbance_index))
+		);
+		if (stmts.length) await env.oura_db.batch(stmts);
+	}
+
+	// daily_cardiovascular_age -> daily_summaries (cv_age_offset)
+	if (endpoint === 'daily_cardiovascular_age') {
+		const stmt = env.oura_db.prepare(
+			`INSERT INTO daily_summaries (day, cv_age_offset, updated_at)
+			VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+			ON CONFLICT(day) DO UPDATE SET
+				cv_age_offset=excluded.cv_age_offset,
+				updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`
+		);
+		const stmts = data.map((d) => stmt.bind(d.day, toInt(d.vascular_age)));
+		if (stmts.length) await env.oura_db.batch(stmts);
+	}
+
+	// vo2_max -> daily_summaries (vo2_max)
+	if (endpoint === 'vo2_max') {
+		const stmt = env.oura_db.prepare(
+			`INSERT INTO daily_summaries (day, vo2_max, updated_at)
+			VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+			ON CONFLICT(day) DO UPDATE SET
+				vo2_max=excluded.vo2_max,
+				updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`
+		);
+		const stmts = data.map((d) => stmt.bind(d.day, toReal(d.vo2_max)));
+		if (stmts.length) await env.oura_db.batch(stmts);
+	}
+
+	// sleep -> sleep_episodes
+	if (endpoint === 'sleep') {
+		const stmt = env.oura_db.prepare(
+			`INSERT INTO sleep_episodes (id, day, start_datetime, end_datetime, type, heart_rate_avg, heart_rate_lowest, hrv_avg, breath_avg, temperature_deviation, deep_duration, rem_duration, light_duration, awake_duration)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(id) DO UPDATE SET
+				day=excluded.day,
+				start_datetime=excluded.start_datetime,
+				end_datetime=excluded.end_datetime,
+				type=excluded.type,
+				heart_rate_avg=excluded.heart_rate_avg,
+				heart_rate_lowest=excluded.heart_rate_lowest,
+				hrv_avg=excluded.hrv_avg,
+				breath_avg=excluded.breath_avg,
+				temperature_deviation=excluded.temperature_deviation,
+				deep_duration=excluded.deep_duration,
+				rem_duration=excluded.rem_duration,
+				light_duration=excluded.light_duration,
+				awake_duration=excluded.awake_duration`
+		);
+		const stmts = data.map((d) =>
+			stmt.bind(
+				d.id,
+				d.day,
+				d.bedtime_start ?? null,
+				d.bedtime_end ?? null,
+				d.type ?? null,
+				toReal(d.average_heart_rate),
+				toReal(d.lowest_heart_rate),
+				toReal(d.average_hrv),
+				toReal(d.average_breath),
+				toReal(d.readiness?.temperature_deviation ?? d.temperature_deviation),
+				toInt(d.deep_sleep_duration),
+				toInt(d.rem_sleep_duration),
+				toInt(d.light_sleep_duration),
+				toInt(d.awake_time)
+			)
+		);
+		if (stmts.length) await env.oura_db.batch(stmts);
+	}
+
+	// heartrate -> heart_rate_samples
 	if (endpoint === 'heartrate') {
 		const stmt = env.oura_db.prepare(
 			'INSERT INTO heart_rate_samples (timestamp, bpm, source) VALUES (?, ?, ?) ' +
@@ -319,17 +531,99 @@ async function saveToD1(env: Env, endpoint: string, data: any[]) {
 			.map((d) => {
 				const timestamp = typeof d?.timestamp === 'string' ? d.timestamp : null;
 				if (!timestamp) return null;
-				const bpm = typeof d?.bpm === 'number' ? d.bpm : Number(d?.bpm);
-				const bpmVal = Number.isFinite(bpm) ? bpm : null;
-				const source = typeof d?.source === 'string' ? d.source : null;
-				return stmt.bind(timestamp, bpmVal, source);
+				return stmt.bind(timestamp, toInt(d.bpm), d.source ?? null);
 			})
 			.filter(Boolean) as any[];
-
-		if (stmts.length) {
-			await env.oura_db.batch(stmts);
-		}
+		if (stmts.length) await env.oura_db.batch(stmts);
 	}
+
+	// workout -> activity_logs
+	if (endpoint === 'workout') {
+		const stmt = env.oura_db.prepare(
+			`INSERT INTO activity_logs (id, type, start_datetime, end_datetime, activity_label, intensity, calories, distance, hr_avg)
+			VALUES (?, 'workout', ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(id) DO UPDATE SET
+				start_datetime=excluded.start_datetime,
+				end_datetime=excluded.end_datetime,
+				activity_label=excluded.activity_label,
+				intensity=excluded.intensity,
+				calories=excluded.calories,
+				distance=excluded.distance,
+				hr_avg=excluded.hr_avg`
+		);
+		const stmts = data.map((d) =>
+			stmt.bind(
+				d.id,
+				d.start_datetime ?? null,
+				d.end_datetime ?? null,
+				d.activity ?? d.sport ?? null,
+				d.intensity ?? null,
+				toReal(d.calories),
+				toReal(d.distance),
+				toReal(d.average_heart_rate)
+			)
+		);
+		if (stmts.length) await env.oura_db.batch(stmts);
+	}
+
+	// session -> activity_logs (meditation/breathing sessions)
+	if (endpoint === 'session') {
+		const stmt = env.oura_db.prepare(
+			`INSERT INTO activity_logs (id, type, start_datetime, end_datetime, activity_label, hr_avg, mood)
+			VALUES (?, 'session', ?, ?, ?, ?, ?)
+			ON CONFLICT(id) DO UPDATE SET
+				start_datetime=excluded.start_datetime,
+				end_datetime=excluded.end_datetime,
+				activity_label=excluded.activity_label,
+				hr_avg=excluded.hr_avg,
+				mood=excluded.mood`
+		);
+		const stmts = data.map((d) =>
+			stmt.bind(
+				d.id,
+				d.start_datetime ?? null,
+				d.end_datetime ?? null,
+				d.type ?? null,
+				toReal(d.heart_rate?.average),
+				d.mood ?? null
+			)
+		);
+		if (stmts.length) await env.oura_db.batch(stmts);
+	}
+
+	// tag -> user_tags
+	if (endpoint === 'tag') {
+		const stmt = env.oura_db.prepare(
+			`INSERT INTO user_tags (id, day, tag_type, comment)
+			VALUES (?, ?, ?, ?)
+			ON CONFLICT(id) DO UPDATE SET
+				day=excluded.day,
+				tag_type=excluded.tag_type,
+				comment=excluded.comment`
+		);
+		const stmts = data.map((d) =>
+			stmt.bind(d.id, d.day ?? null, d.tag_type_code ?? d.tags?.[0] ?? null, d.comment ?? null)
+		);
+		if (stmts.length) await env.oura_db.batch(stmts);
+	}
+}
+
+function toInt(v: unknown): number | null {
+	if (typeof v === 'number' && Number.isFinite(v)) return Math.round(v);
+	if (typeof v === 'string') {
+		const n = Number(v);
+		if (Number.isFinite(n)) return Math.round(n);
+	}
+	return null;
+}
+
+function toReal(v: unknown): number | null {
+	if (typeof v === 'number' && Number.isFinite(v)) return v;
+	if (typeof v === 'string') {
+		const n = Number(v);
+		if (Number.isFinite(n)) return n;
+	}
+	return null;
 }
 
 function buildOuraUrl(endpoint: string, startDate: string, endDate: string): string {
@@ -369,15 +663,8 @@ async function ingestResource(
 
 		const json = (await res.json().catch(() => null)) as any;
 		const data = json?.data;
-		if (Array.isArray(data)) {
-			if (data.length) {
-				if (r.resource !== 'heartrate') {
-					await saveRawDocuments(env, r.resource, data);
-				}
-				await saveToD1(env, r.resource, data);
-			}
-		} else if (json && typeof json === 'object') {
-			await saveRawSingleton(env, r.resource, json);
+		if (Array.isArray(data) && data.length) {
+			await saveToD1(env, r.resource, data);
 		}
 
 		if (!r.paginated) return;
@@ -637,61 +924,3 @@ function withCors(response: Response, origin: string | null): Response {
 	});
 }
 
-async function saveRawDocuments(env: Env, resource: string, documents: any[]) {
-	const fetchedAt = new Date().toISOString();
-	const baseStmt = env.oura_db.prepare(
-		'INSERT INTO oura_raw_documents (user_id, resource, document_id, payload_json, day, start_at, end_at, fetched_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ' +
-			'ON CONFLICT(user_id, resource, document_id) DO UPDATE SET payload_json=excluded.payload_json, day=excluded.day, start_at=excluded.start_at, end_at=excluded.end_at, fetched_at=excluded.fetched_at'
-	);
-
-	const userId = 'default';
-	const stmts = documents.map((d) => {
-		const { day, startAt, endAt } = extractDayStartEnd(d);
-		const documentId = String(d?.id ?? startAt ?? day ?? crypto.randomUUID());
-		return baseStmt.bind(userId, resource, documentId, JSON.stringify(d), day, startAt, endAt, fetchedAt);
-	});
-
-	if (stmts.length) {
-		await env.oura_db.batch(stmts);
-	}
-}
-
-async function saveRawSingleton(env: Env, resource: string, payload: unknown) {
-	const userId = 'default';
-	const fetchedAt = new Date().toISOString();
-	const stmt = env.oura_db.prepare(
-		'INSERT INTO oura_raw_documents (user_id, resource, document_id, payload_json, fetched_at) VALUES (?, ?, ?, ?, ?) ' +
-			'ON CONFLICT(user_id, resource, document_id) DO UPDATE SET payload_json=excluded.payload_json, fetched_at=excluded.fetched_at'
-	);
-	await stmt.bind(userId, resource, resource, JSON.stringify(payload), fetchedAt).run();
-}
-
-function pickString(v: unknown): string | null {
-	return typeof v === 'string' && v.length ? v : null;
-}
-
-function extractDayStartEnd(d: any): { day: string | null; startAt: string | null; endAt: string | null } {
-	const startAt =
-		pickString(d?.start_datetime) ||
-		pickString(d?.start_time) ||
-		pickString(d?.bedtime_start) ||
-		pickString(d?.bedtime_start_datetime) ||
-		pickString(d?.timestamp) ||
-		pickString(d?.start) ||
-		null;
-
-	const endAt =
-		pickString(d?.end_datetime) ||
-		pickString(d?.end_time) ||
-		pickString(d?.bedtime_end) ||
-		pickString(d?.bedtime_end_datetime) ||
-		pickString(d?.end) ||
-		null;
-
-	const day =
-		pickString(d?.day) ||
-		(typeof startAt === 'string' && startAt.length >= 10 ? startAt.slice(0, 10) : null) ||
-		(typeof endAt === 'string' && endAt.length >= 10 ? endAt.slice(0, 10) : null);
-
-	return { day, startAt, endAt };
-}
