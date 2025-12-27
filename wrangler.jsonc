@@ -5,7 +5,7 @@
 	"main": "src/index.ts",
 	"compatibility_date": "2025-12-25",
 	"triggers": {
-    "crons": ["0 6 30 * *"]
+    "crons": ["0 9 * * *"] // Runs daily at 9:00 AM
   },
 	"observability": {
 		"enabled": true
