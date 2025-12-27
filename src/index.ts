@@ -309,6 +309,27 @@ async function saveToD1(env: Env, endpoint: string, data: any[]) {
 		);
 		await env.oura_db.batch(data.map((d) => stmt.bind(d.day, d.score)));
   }
+
+	if (endpoint === 'heartrate') {
+		const stmt = env.oura_db.prepare(
+			'INSERT INTO heart_rate_samples (timestamp, bpm, source) VALUES (?, ?, ?) ' +
+				'ON CONFLICT(timestamp) DO UPDATE SET bpm=excluded.bpm, source=excluded.source'
+		);
+		const stmts = data
+			.map((d) => {
+				const timestamp = typeof d?.timestamp === 'string' ? d.timestamp : null;
+				if (!timestamp) return null;
+				const bpm = typeof d?.bpm === 'number' ? d.bpm : Number(d?.bpm);
+				const bpmVal = Number.isFinite(bpm) ? bpm : null;
+				const source = typeof d?.source === 'string' ? d.source : null;
+				return stmt.bind(timestamp, bpmVal, source);
+			})
+			.filter(Boolean) as any[];
+
+		if (stmts.length) {
+			await env.oura_db.batch(stmts);
+		}
+	}
 }
 
 function buildOuraUrl(endpoint: string, startDate: string, endDate: string): string {
@@ -350,7 +371,9 @@ async function ingestResource(
 		const data = json?.data;
 		if (Array.isArray(data)) {
 			if (data.length) {
-				await saveRawDocuments(env, r.resource, data);
+				if (r.resource !== 'heartrate') {
+					await saveRawDocuments(env, r.resource, data);
+				}
 				await saveToD1(env, r.resource, data);
 			}
 		} else if (json && typeof json === 'object') {
@@ -623,8 +646,8 @@ async function saveRawDocuments(env: Env, resource: string, documents: any[]) {
 
 	const userId = 'default';
 	const stmts = documents.map((d) => {
-		const documentId = String(d?.id ?? d?.day ?? crypto.randomUUID());
 		const { day, startAt, endAt } = extractDayStartEnd(d);
+		const documentId = String(d?.id ?? startAt ?? day ?? crypto.randomUUID());
 		return baseStmt.bind(userId, resource, documentId, JSON.stringify(d), day, startAt, endAt, fetchedAt);
 	});
 
