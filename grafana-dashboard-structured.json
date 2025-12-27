@@ -18,7 +18,6 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
-  "id": 506973856284672,
   "links": [],
   "panels": [
     {
@@ -3837,13 +3836,13 @@
     "list": []
   },
   "time": {
-    "from": "now-90d",
+    "from": "now-7d",
     "to": "now"
   },
   "timepicker": {},
   "timezone": "utc",
   "title": "Oura Health Dashboard (Full)",
   "uid": "oura-health-full-v2",
-  "version": 4,
+  "version": 9,
   "weekStart": ""
 }

@@ -2,6 +2,18 @@ Next:
 secure repo
 clean token table?
 
+# Backfill script
+
+```bash
+for offset in $(seq 0 14 1094); do
+  echo "Backfilling offset $offset..."
+  curl -s -X POST "https://oura-cf.keith20.workers.dev/backfill?days=14&offset_days=$offset" \
+    -H "Authorization: Bearer redacted"
+  echo ""
+  sleep 3
+done
+```
+
 # High-level outline (shareable)
 
 - **Goal**
