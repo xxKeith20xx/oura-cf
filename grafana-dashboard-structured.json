@@ -1239,7 +1239,7 @@
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
-            "data": "{\"sql\":\"WITH ds AS (SELECT day, CAST(COALESCE(json_extract(payload_json,'$.efficiency'), json_extract(payload_json,'$.sleep_efficiency'), json_extract(payload_json,'$.contributors.efficiency')) AS REAL) AS value FROM oura_raw_documents WHERE resource='daily_sleep' AND day>=date('now','-2 years')), sl AS (SELECT day, AVG(CAST(COALESCE(json_extract(payload_json,'$.efficiency'), json_extract(payload_json,'$.sleep_efficiency')) AS REAL)) AS value FROM oura_raw_documents WHERE resource='sleep' AND day>=date('now','-2 years') GROUP BY day), m AS (SELECT COALESCE(sl.day, ds.day) AS day, COALESCE(sl.value, ds.value) AS value FROM sl LEFT JOIN ds ON sl.day=ds.day UNION SELECT ds.day, ds.value FROM ds LEFT JOIN sl ON ds.day=sl.day WHERE sl.day IS NULL) SELECT day||'T00:00:00Z' AS time, value FROM m ORDER BY day\",\"params\":[]}",
+            "data": "{\"sql\":\"SELECT day||'T00:00:00Z' AS time, sleep_efficiency AS value FROM daily_summaries WHERE sleep_efficiency IS NOT NULL AND day >= date('now', '-2 years') ORDER BY day\",\"params\":[]}",
             "method": "POST"
           }
         }
@@ -1355,7 +1355,7 @@
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
-            "data": "{\"sql\":\"WITH ds AS (SELECT day, CAST(json_extract(payload_json,'$.latency') AS REAL)/60.0 AS value FROM oura_raw_documents WHERE resource='daily_sleep' AND day>=date('now','-2 years')), sl AS (SELECT day, AVG(CAST(json_extract(payload_json,'$.latency') AS REAL))/60.0 AS value FROM oura_raw_documents WHERE resource='sleep' AND day>=date('now','-2 years') GROUP BY day), m AS (SELECT COALESCE(sl.day, ds.day) AS day, COALESCE(sl.value, ds.value) AS value FROM sl LEFT JOIN ds ON sl.day=ds.day UNION SELECT ds.day, ds.value FROM ds LEFT JOIN sl ON ds.day=sl.day WHERE sl.day IS NULL) SELECT day||'T00:00:00Z' AS time, value FROM m ORDER BY day\",\"params\":[]}",
+            "data": "{\"sql\":\"SELECT day||'T00:00:00Z' AS time, sleep_latency AS value FROM daily_summaries WHERE sleep_latency IS NOT NULL AND day >= date('now', '-2 years') ORDER BY day\",\"params\":[]}",
             "method": "POST"
           }
         }
@@ -1470,7 +1470,7 @@
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
-            "data": "{\"sql\":\"WITH ds AS (SELECT day, CAST(COALESCE(json_extract(payload_json,'$.average_heart_rate'), json_extract(payload_json,'$.avg_heart_rate'), json_extract(payload_json,'$.average_hr')) AS REAL) AS value FROM oura_raw_documents WHERE resource='daily_sleep' AND day>=date('now','-2 years')), sl AS (SELECT day, AVG(CAST(COALESCE(json_extract(payload_json,'$.average_heart_rate'), json_extract(payload_json,'$.avg_heart_rate'), json_extract(payload_json,'$.average_hr')) AS REAL)) AS value FROM oura_raw_documents WHERE resource='sleep' AND day>=date('now','-2 years') GROUP BY day), m AS (SELECT COALESCE(sl.day, ds.day) AS day, COALESCE(sl.value, ds.value) AS value FROM sl LEFT JOIN ds ON sl.day=ds.day UNION SELECT ds.day, ds.value FROM ds LEFT JOIN sl ON ds.day=sl.day WHERE sl.day IS NULL) SELECT day||'T00:00:00Z' AS time, value FROM m ORDER BY day\",\"params\":[]}",
+            "data": "{\"sql\":\"SELECT day||'T00:00:00Z' AS time, heart_rate_avg AS value FROM sleep_episodes WHERE type='long_sleep' AND heart_rate_avg IS NOT NULL AND day >= date('now', '-2 years') ORDER BY day\",\"params\":[]}",
             "method": "POST"
           }
         }
@@ -1585,7 +1585,7 @@
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
-            "data": "{\"sql\":\"WITH ds AS (SELECT day, CAST(COALESCE(json_extract(payload_json,'$.average_hrv'), json_extract(payload_json,'$.hrv')) AS REAL) AS value FROM oura_raw_documents WHERE resource='daily_sleep' AND day>=date('now','-2 years')), sl AS (SELECT day, AVG(CAST(COALESCE(json_extract(payload_json,'$.average_hrv'), json_extract(payload_json,'$.hrv')) AS REAL)) AS value FROM oura_raw_documents WHERE resource='sleep' AND day>=date('now','-2 years') GROUP BY day), m AS (SELECT COALESCE(sl.day, ds.day) AS day, COALESCE(sl.value, ds.value) AS value FROM sl LEFT JOIN ds ON sl.day=ds.day UNION SELECT ds.day, ds.value FROM ds LEFT JOIN sl ON ds.day=sl.day WHERE sl.day IS NULL) SELECT day||'T00:00:00Z' AS time, value FROM m ORDER BY day\",\"params\":[]}",
+            "data": "{\"sql\":\"SELECT day||'T00:00:00Z' AS time, hrv_avg AS value FROM sleep_episodes WHERE type='long_sleep' AND hrv_avg IS NOT NULL AND day >= date('now', '-2 years') ORDER BY day\",\"params\":[]}",
             "method": "POST"
           }
         }
@@ -1701,7 +1701,7 @@
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
-            "data": "{\"sql\":\"WITH ds AS (SELECT day, CAST(COALESCE(json_extract(payload_json,'$.average_breath'), json_extract(payload_json,'$.respiratory_rate')) AS REAL) AS value FROM oura_raw_documents WHERE resource='daily_sleep' AND day>=date('now','-2 years')), sl AS (SELECT day, AVG(CAST(COALESCE(json_extract(payload_json,'$.average_breath'), json_extract(payload_json,'$.respiratory_rate')) AS REAL)) AS value FROM oura_raw_documents WHERE resource='sleep' AND day>=date('now','-2 years') GROUP BY day), m AS (SELECT COALESCE(sl.day, ds.day) AS day, COALESCE(sl.value, ds.value) AS value FROM sl LEFT JOIN ds ON sl.day=ds.day UNION SELECT ds.day, ds.value FROM ds LEFT JOIN sl ON ds.day=sl.day WHERE sl.day IS NULL) SELECT day||'T00:00:00Z' AS time, value FROM m ORDER BY day\",\"params\":[]}",
+            "data": "{\"sql\":\"SELECT day||'T00:00:00Z' AS time, breath_avg AS value FROM sleep_episodes WHERE type='long_sleep' AND breath_avg IS NOT NULL AND day >= date('now', '-2 years') ORDER BY day\",\"params\":[]}",
             "method": "POST"
           }
         }
@@ -1816,7 +1816,7 @@
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
-            "data": "{\"sql\":\"WITH ds AS (SELECT day, CAST(json_extract(payload_json,'$.restless_periods') AS REAL) AS value FROM oura_raw_documents WHERE resource='daily_sleep' AND day>=date('now','-2 years')), sl AS (SELECT day, AVG(CAST(json_extract(payload_json,'$.restless_periods') AS REAL)) AS value FROM oura_raw_documents WHERE resource='sleep' AND day>=date('now','-2 years') GROUP BY day), m AS (SELECT COALESCE(sl.day, ds.day) AS day, COALESCE(sl.value, ds.value) AS value FROM sl LEFT JOIN ds ON sl.day=ds.day UNION SELECT ds.day, ds.value FROM ds LEFT JOIN sl ON ds.day=sl.day WHERE sl.day IS NULL) SELECT day||'T00:00:00Z' AS time, value FROM m ORDER BY day\",\"params\":[]}",
+            "data": "{\"sql\":\"SELECT day||'T00:00:00Z' AS time, sleep_restfulness AS value FROM daily_summaries WHERE sleep_restfulness IS NOT NULL AND day >= date('now', '-2 years') ORDER BY day\",\"params\":[]}",
             "method": "POST"
           }
         }
@@ -1932,7 +1932,7 @@
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
-            "data": "{\"sql\":\"SELECT day||'T00:00:00Z' AS time, CAST(json_extract(payload_json,'$.temperature_deviation') AS REAL) AS value FROM oura_raw_documents WHERE resource='daily_readiness' AND day>=date('now','-2 years') ORDER BY day\",\"params\":[]}",
+            "data": "{\"sql\":\"SELECT day||'T00:00:00Z' AS time, temperature_deviation AS value FROM sleep_episodes WHERE type='long_sleep' AND temperature_deviation IS NOT NULL AND day >= date('now', '-2 years') ORDER BY day\",\"params\":[]}",
             "method": "POST"
           }
         }
@@ -2060,7 +2060,7 @@
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
-            "data": "{\"sql\":\"SELECT day||'T00:00:00Z' AS time, CAST(json_extract(payload_json,'$.steps') AS REAL) AS value FROM oura_raw_documents WHERE resource='daily_activity' AND day>=date('now','-2 years') ORDER BY day\",\"params\":[]}",
+            "data": "{\"sql\":\"SELECT day||'T00:00:00Z' AS time, activity_steps AS value FROM daily_summaries WHERE activity_steps IS NOT NULL AND day >= date('now', '-2 years') ORDER BY day\",\"params\":[]}",
             "method": "POST"
           }
         }
@@ -2175,7 +2175,7 @@
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
-            "data": "{\"sql\":\"SELECT day||'T00:00:00Z' AS time, CAST(json_extract(payload_json,'$.total_calories') AS REAL) AS value FROM oura_raw_documents WHERE resource='daily_activity' AND day>=date('now','-2 years') ORDER BY day\",\"params\":[]}",
+            "data": "{\"sql\":\"SELECT day||'T00:00:00Z' AS time, activity_total_calories AS value FROM daily_summaries WHERE activity_total_calories IS NOT NULL AND day >= date('now', '-2 years') ORDER BY day\",\"params\":[]}",
             "method": "POST"
           }
         }
@@ -2290,7 +2290,7 @@
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
-            "data": "{\"sql\":\"SELECT day||'T00:00:00Z' AS time, CAST(json_extract(payload_json,'$.active_calories') AS REAL) AS value FROM oura_raw_documents WHERE resource='daily_activity' AND day>=date('now','-2 years') ORDER BY day\",\"params\":[]}",
+            "data": "{\"sql\":\"SELECT day||'T00:00:00Z' AS time, activity_active_calories AS value FROM daily_summaries WHERE activity_active_calories IS NOT NULL AND day >= date('now', '-2 years') ORDER BY day\",\"params\":[]}",
             "method": "POST"
           }
         }
@@ -2405,7 +2405,7 @@
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
-            "data": "{\"sql\":\"SELECT day||'T00:00:00Z' AS time, CAST(json_extract(payload_json,'$.equivalent_walking_distance') AS REAL) AS value FROM oura_raw_documents WHERE resource='daily_activity' AND day>=date('now','-2 years') ORDER BY day\",\"params\":[]}",
+            "data": "{\"sql\":\"SELECT day||'T00:00:00Z' AS time, NULL AS value FROM daily_summaries WHERE day >= date('now', '-2 years') ORDER BY day\",\"params\":[]}",
             "method": "POST"
           }
         }
@@ -2530,7 +2530,7 @@
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
-            "data": "{\"sql\":\"SELECT day||'T00:00:00Z' AS time, CAST(json_extract(payload_json,'$.high_activity_time') AS REAL)/60.0 AS high, CAST(json_extract(payload_json,'$.medium_activity_time') AS REAL)/60.0 AS medium, CAST(json_extract(payload_json,'$.low_activity_time') AS REAL)/60.0 AS low FROM oura_raw_documents WHERE resource='daily_activity' AND day>=date('now','-2 years') ORDER BY day\",\"params\":[]}",
+            "data": "{\"sql\":\"SELECT day||'T00:00:00Z' AS time, NULL AS high, NULL AS medium, NULL AS low FROM daily_summaries WHERE day >= date('now', '-2 years') ORDER BY day\",\"params\":[]}",
             "method": "POST"
           }
         }
@@ -2653,7 +2653,7 @@
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
-            "data": "{\"sql\":\"SELECT strftime('%Y-%W', substr(start_at,1,10)) AS week, COUNT(*) AS workouts FROM oura_raw_documents WHERE resource='workout' AND start_at>=datetime('now','-2 years') GROUP BY week ORDER BY week\",\"params\":[]}",
+            "data": "{\"sql\":\"SELECT strftime('%Y-%W', substr(start_datetime,1,10)) AS week, COUNT(*) AS workouts FROM activity_logs WHERE type='workout' AND start_datetime>=datetime('now','-2 years') GROUP BY week ORDER BY week\",\"params\":[]}",
             "method": "POST"
           }
         }
@@ -2764,7 +2764,7 @@
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
-            "data": "{\"sql\":\"SELECT strftime('%Y-%W', substr(start_at,1,10)) AS week, SUM(COALESCE(CAST(json_extract(payload_json,'$.duration') AS REAL),0))/3600.0 AS hours FROM oura_raw_documents WHERE resource='workout' AND start_at>=datetime('now','-2 years') GROUP BY week ORDER BY week\",\"params\":[]}",
+            "data": "{\"sql\":\"SELECT strftime('%Y-%W', substr(start_datetime,1,10)) AS week, SUM((julianday(end_datetime)-julianday(start_datetime))*24) AS hours FROM activity_logs WHERE type='workout' AND start_datetime>=datetime('now','-2 years') GROUP BY week ORDER BY week\",\"params\":[]}",
             "method": "POST"
           }
         }
@@ -2846,7 +2846,7 @@
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
-            "data": "{\"sql\":\"SELECT COALESCE(json_extract(payload_json,'$.activity'),'unknown') AS activity, COUNT(*) AS count FROM oura_raw_documents WHERE resource='workout' AND start_at>=datetime('now','-2 years') GROUP BY activity ORDER BY count DESC LIMIT 12\",\"params\":[]}",
+            "data": "{\"sql\":\"SELECT COALESCE(activity_label,'unknown') AS activity, COUNT(*) AS count FROM activity_logs WHERE type='workout' AND start_datetime>=datetime('now','-2 years') GROUP BY activity ORDER BY count DESC LIMIT 12\",\"params\":[]}",
             "method": "POST"
           }
         }
@@ -2922,7 +2922,7 @@
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
-            "data": "{\"sql\":\"SELECT COUNT(*) AS value FROM oura_raw_documents WHERE resource='workout' AND start_at>=datetime('now','-2 years')\",\"params\":[]}",
+            "data": "{\"sql\":\"SELECT COUNT(*) AS value FROM activity_logs WHERE type='workout' AND start_datetime>=datetime('now','-2 years')\",\"params\":[]}",
             "method": "POST"
           }
         }
@@ -3000,7 +3000,7 @@
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
-            "data": "{\"sql\":\"SELECT SUM(COALESCE(CAST(json_extract(payload_json,'$.duration') AS REAL),0))/3600.0 AS value FROM oura_raw_documents WHERE resource='workout' AND start_at>=datetime('now','-2 years')\",\"params\":[]}",
+            "data": "{\"sql\":\"SELECT SUM((julianday(end_datetime)-julianday(start_datetime))*24) AS value FROM activity_logs WHERE type='workout' AND start_datetime>=datetime('now','-2 years')\",\"params\":[]}",
             "method": "POST"
           }
         }
@@ -3128,7 +3128,7 @@
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
-            "data": "{\"sql\":\"SELECT day||'T00:00:00Z' AS time, CAST(json_extract(payload_json,'$.stress_high') AS REAL) AS value FROM oura_raw_documents WHERE resource='daily_stress' AND day>=date('now','-2 years') ORDER BY day\",\"params\":[]}",
+            "data": "{\"sql\":\"SELECT day||'T00:00:00Z' AS time, stress_index AS value FROM daily_summaries WHERE stress_index IS NOT NULL AND day >= date('now', '-2 years') ORDER BY day\",\"params\":[]}",
             "method": "POST"
           }
         }
@@ -3243,7 +3243,7 @@
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
-            "data": "{\"sql\":\"SELECT day||'T00:00:00Z' AS time, CAST(json_extract(payload_json,'$.recovery_high') AS REAL) AS value FROM oura_raw_documents WHERE resource='daily_stress' AND day>=date('now','-2 years') ORDER BY day\",\"params\":[]}",
+            "data": "{\"sql\":\"SELECT day||'T00:00:00Z' AS time, resilience_contributors_stress AS value FROM daily_summaries WHERE resilience_contributors_stress IS NOT NULL AND day >= date('now', '-2 years') ORDER BY day\",\"params\":[]}",
             "method": "POST"
           }
         }
@@ -3358,7 +3358,7 @@
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
-            "data": "{\"sql\":\"SELECT day||'T00:00:00Z' AS time, CAST(json_extract(payload_json,'$.stress_low') AS REAL) AS value FROM oura_raw_documents WHERE resource='daily_stress' AND day>=date('now','-2 years') ORDER BY day\",\"params\":[]}",
+            "data": "{\"sql\":\"SELECT day||'T00:00:00Z' AS time, stress_index AS value FROM daily_summaries WHERE stress_index IS NOT NULL AND day >= date('now', '-2 years') ORDER BY day\",\"params\":[]}",
             "method": "POST"
           }
         }
@@ -3473,7 +3473,7 @@
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
-            "data": "{\"sql\":\"SELECT day||'T00:00:00Z' AS time, CAST(json_extract(payload_json,'$.recovery_low') AS REAL) AS value FROM oura_raw_documents WHERE resource='daily_stress' AND day>=date('now','-2 years') ORDER BY day\",\"params\":[]}",
+            "data": "{\"sql\":\"SELECT day||'T00:00:00Z' AS time, resilience_contributors_sleep AS value FROM daily_summaries WHERE resilience_contributors_sleep IS NOT NULL AND day >= date('now', '-2 years') ORDER BY day\",\"params\":[]}",
             "method": "POST"
           }
         }
@@ -3596,7 +3596,7 @@
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
-            "data": "{\"sql\":\"WITH joined AS (SELECT r.day AS day, CAST(json_extract(r.payload_json,'$.score') AS REAL) AS readiness, CAST(json_extract(s.payload_json,'$.total_sleep_duration') AS REAL)/3600.0 AS sleep_h FROM oura_raw_documents r JOIN oura_raw_documents s ON r.day=s.day AND s.resource='daily_sleep' WHERE r.resource='daily_readiness' AND r.day>=date('now','-1 year')) SELECT CASE WHEN sleep_h<6 THEN '<6h' WHEN sleep_h<7 THEN '6-7h' WHEN sleep_h<8 THEN '7-8h' ELSE '8h+' END AS bucket, ROUND(AVG(readiness),1) AS avg_readiness FROM joined GROUP BY bucket ORDER BY bucket\",\"params\":[]}",
+            "data": "{\"sql\":\"WITH joined AS (SELECT ds.day, ds.readiness_score AS readiness, (se.deep_duration + se.rem_duration + se.light_duration)/3600.0 AS sleep_h FROM daily_summaries ds JOIN sleep_episodes se ON ds.day=se.day AND se.type='long_sleep' WHERE ds.day>=date('now','-1 year') AND ds.readiness_score IS NOT NULL) SELECT CASE WHEN sleep_h<6 THEN '<6h' WHEN sleep_h<7 THEN '6-7h' WHEN sleep_h<8 THEN '7-8h' ELSE '8h+' END AS bucket, ROUND(AVG(readiness),1) AS avg_readiness FROM joined GROUP BY bucket ORDER BY bucket\",\"params\":[]}",
             "method": "POST"
           }
         }
@@ -3716,7 +3716,7 @@
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
-            "data": "{\"sql\":\"WITH r AS (SELECT day, CAST(json_extract(payload_json,'$.score') AS REAL) AS score FROM oura_raw_documents WHERE resource='daily_readiness' AND day>=date('now','-1 year')), s AS (SELECT day, CAST(json_extract(payload_json,'$.score') AS REAL) AS score FROM oura_raw_documents WHERE resource='daily_sleep' AND day>=date('now','-1 year')), a AS (SELECT day, CAST(json_extract(payload_json,'$.score') AS REAL) AS score FROM oura_raw_documents WHERE resource='daily_activity' AND day>=date('now','-1 year')) SELECT strftime('%Y-%W', r.day) AS week, ROUND(AVG(r.score),1) AS readiness, ROUND(AVG(s.score),1) AS sleep, ROUND(AVG(a.score),1) AS activity FROM r JOIN s ON r.day=s.day JOIN a ON r.day=a.day GROUP BY week ORDER BY week\",\"params\":[]}",
+            "data": "{\"sql\":\"SELECT strftime('%Y-%W', day) AS week, ROUND(AVG(readiness_score),1) AS readiness, ROUND(AVG(sleep_score),1) AS sleep, ROUND(AVG(activity_score),1) AS activity FROM daily_summaries WHERE day>=date('now','-1 year') GROUP BY week ORDER BY week\",\"params\":[]}",
             "method": "POST"
           }
         }
@@ -3818,7 +3818,7 @@
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
-            "data": "{\"sql\":\"SELECT resource, MIN(COALESCE(day, substr(start_at,1,10))) AS min_day, MAX(COALESCE(day, substr(start_at,1,10))) AS max_day, COUNT(*) AS records FROM oura_raw_documents GROUP BY resource ORDER BY resource\",\"params\":[]}",
+            "data": "{\"sql\":\"SELECT 'daily_summaries' AS resource, MIN(day) AS min_day, MAX(day) AS max_day, COUNT(*) AS records FROM daily_summaries UNION ALL SELECT 'sleep_episodes', MIN(day), MAX(day), COUNT(*) FROM sleep_episodes UNION ALL SELECT 'heart_rate_samples', MIN(substr(timestamp,1,10)), MAX(substr(timestamp,1,10)), COUNT(*) FROM heart_rate_samples UNION ALL SELECT 'activity_logs', MIN(substr(start_datetime,1,10)), MAX(substr(start_datetime,1,10)), COUNT(*) FROM activity_logs\",\"params\":[]}",
             "method": "POST"
           }
         }
