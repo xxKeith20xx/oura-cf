@@ -4,6 +4,8 @@
 	"preview_urls": false,
 	"main": "src/index.ts",
 	"compatibility_date": "2025-12-25",
+	"workers_dev": false,
+	"custom_domains": ["oura.keith20.dev"],
 	"triggers": {
     "crons": ["0 8,20 * * *"]
   },
