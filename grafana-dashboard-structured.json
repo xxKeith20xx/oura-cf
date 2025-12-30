@@ -97,7 +97,7 @@
           "root_selector": "results",
           "source": "url",
           "type": "json",
-          "url": "https://oura-cf.keith20.workers.dev/api/sql",
+          "url": "https://oura.keith20.dev/api/sql",
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
@@ -173,7 +173,7 @@
           "root_selector": "results",
           "source": "url",
           "type": "json",
-          "url": "https://oura-cf.keith20.workers.dev/api/sql",
+          "url": "https://oura.keith20.dev/api/sql",
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
@@ -249,7 +249,7 @@
           "root_selector": "results",
           "source": "url",
           "type": "json",
-          "url": "https://oura-cf.keith20.workers.dev/api/sql",
+          "url": "https://oura.keith20.dev/api/sql",
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
@@ -327,7 +327,7 @@
           "root_selector": "results",
           "source": "url",
           "type": "json",
-          "url": "https://oura-cf.keith20.workers.dev/api/sql",
+          "url": "https://oura.keith20.dev/api/sql",
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
@@ -404,7 +404,7 @@
           "root_selector": "results",
           "source": "url",
           "type": "json",
-          "url": "https://oura-cf.keith20.workers.dev/api/sql",
+          "url": "https://oura.keith20.dev/api/sql",
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
@@ -481,7 +481,7 @@
           "root_selector": "results",
           "source": "url",
           "type": "json",
-          "url": "https://oura-cf.keith20.workers.dev/api/sql",
+          "url": "https://oura.keith20.dev/api/sql",
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
@@ -620,7 +620,7 @@
           "root_selector": "results",
           "source": "url",
           "type": "json",
-          "url": "https://oura-cf.keith20.workers.dev/api/sql",
+          "url": "https://oura.keith20.dev/api/sql",
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
@@ -741,7 +741,7 @@
           "root_selector": "results",
           "source": "url",
           "type": "json",
-          "url": "https://oura-cf.keith20.workers.dev/api/sql",
+          "url": "https://oura.keith20.dev/api/sql",
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
@@ -862,7 +862,7 @@
           "root_selector": "results",
           "source": "url",
           "type": "json",
-          "url": "https://oura-cf.keith20.workers.dev/api/sql",
+          "url": "https://oura.keith20.dev/api/sql",
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
@@ -991,7 +991,7 @@
           "root_selector": "results",
           "source": "url",
           "type": "json",
-          "url": "https://oura-cf.keith20.workers.dev/api/sql",
+          "url": "https://oura.keith20.dev/api/sql",
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
@@ -1117,7 +1117,7 @@
           "root_selector": "results",
           "source": "url",
           "type": "json",
-          "url": "https://oura-cf.keith20.workers.dev/api/sql",
+          "url": "https://oura.keith20.dev/api/sql",
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
@@ -1234,7 +1234,7 @@
           "root_selector": "results",
           "source": "url",
           "type": "json",
-          "url": "https://oura-cf.keith20.workers.dev/api/sql",
+          "url": "https://oura.keith20.dev/api/sql",
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
@@ -1350,7 +1350,7 @@
           "root_selector": "results",
           "source": "url",
           "type": "json",
-          "url": "https://oura-cf.keith20.workers.dev/api/sql",
+          "url": "https://oura.keith20.dev/api/sql",
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
@@ -1465,7 +1465,7 @@
           "root_selector": "results",
           "source": "url",
           "type": "json",
-          "url": "https://oura-cf.keith20.workers.dev/api/sql",
+          "url": "https://oura.keith20.dev/api/sql",
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
@@ -1580,7 +1580,7 @@
           "root_selector": "results",
           "source": "url",
           "type": "json",
-          "url": "https://oura-cf.keith20.workers.dev/api/sql",
+          "url": "https://oura.keith20.dev/api/sql",
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
@@ -1696,7 +1696,7 @@
           "root_selector": "results",
           "source": "url",
           "type": "json",
-          "url": "https://oura-cf.keith20.workers.dev/api/sql",
+          "url": "https://oura.keith20.dev/api/sql",
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
@@ -1811,7 +1811,7 @@
           "root_selector": "results",
           "source": "url",
           "type": "json",
-          "url": "https://oura-cf.keith20.workers.dev/api/sql",
+          "url": "https://oura.keith20.dev/api/sql",
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
@@ -1927,7 +1927,7 @@
           "root_selector": "results",
           "source": "url",
           "type": "json",
-          "url": "https://oura-cf.keith20.workers.dev/api/sql",
+          "url": "https://oura.keith20.dev/api/sql",
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
@@ -2055,7 +2055,7 @@
           "root_selector": "results",
           "source": "url",
           "type": "json",
-          "url": "https://oura-cf.keith20.workers.dev/api/sql",
+          "url": "https://oura.keith20.dev/api/sql",
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
@@ -2170,7 +2170,7 @@
           "root_selector": "results",
           "source": "url",
           "type": "json",
-          "url": "https://oura-cf.keith20.workers.dev/api/sql",
+          "url": "https://oura.keith20.dev/api/sql",
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
@@ -2285,7 +2285,7 @@
           "root_selector": "results",
           "source": "url",
           "type": "json",
-          "url": "https://oura-cf.keith20.workers.dev/api/sql",
+          "url": "https://oura.keith20.dev/api/sql",
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
@@ -2400,7 +2400,7 @@
           "root_selector": "results",
           "source": "url",
           "type": "json",
-          "url": "https://oura-cf.keith20.workers.dev/api/sql",
+          "url": "https://oura.keith20.dev/api/sql",
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
@@ -2525,7 +2525,7 @@
           "root_selector": "results",
           "source": "url",
           "type": "json",
-          "url": "https://oura-cf.keith20.workers.dev/api/sql",
+          "url": "https://oura.keith20.dev/api/sql",
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
@@ -2648,7 +2648,7 @@
           "root_selector": "results",
           "source": "url",
           "type": "json",
-          "url": "https://oura-cf.keith20.workers.dev/api/sql",
+          "url": "https://oura.keith20.dev/api/sql",
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
@@ -2759,7 +2759,7 @@
           "root_selector": "results",
           "source": "url",
           "type": "json",
-          "url": "https://oura-cf.keith20.workers.dev/api/sql",
+          "url": "https://oura.keith20.dev/api/sql",
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
@@ -2841,7 +2841,7 @@
           "root_selector": "results",
           "source": "url",
           "type": "json",
-          "url": "https://oura-cf.keith20.workers.dev/api/sql",
+          "url": "https://oura.keith20.dev/api/sql",
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
@@ -2917,7 +2917,7 @@
           "root_selector": "results",
           "source": "url",
           "type": "json",
-          "url": "https://oura-cf.keith20.workers.dev/api/sql",
+          "url": "https://oura.keith20.dev/api/sql",
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
@@ -2995,7 +2995,7 @@
           "root_selector": "results",
           "source": "url",
           "type": "json",
-          "url": "https://oura-cf.keith20.workers.dev/api/sql",
+          "url": "https://oura.keith20.dev/api/sql",
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
@@ -3123,7 +3123,7 @@
           "root_selector": "results",
           "source": "url",
           "type": "json",
-          "url": "https://oura-cf.keith20.workers.dev/api/sql",
+          "url": "https://oura.keith20.dev/api/sql",
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
@@ -3238,7 +3238,7 @@
           "root_selector": "results",
           "source": "url",
           "type": "json",
-          "url": "https://oura-cf.keith20.workers.dev/api/sql",
+          "url": "https://oura.keith20.dev/api/sql",
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
@@ -3353,7 +3353,7 @@
           "root_selector": "results",
           "source": "url",
           "type": "json",
-          "url": "https://oura-cf.keith20.workers.dev/api/sql",
+          "url": "https://oura.keith20.dev/api/sql",
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
@@ -3468,7 +3468,7 @@
           "root_selector": "results",
           "source": "url",
           "type": "json",
-          "url": "https://oura-cf.keith20.workers.dev/api/sql",
+          "url": "https://oura.keith20.dev/api/sql",
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
@@ -3591,7 +3591,7 @@
           "root_selector": "results",
           "source": "url",
           "type": "json",
-          "url": "https://oura-cf.keith20.workers.dev/api/sql",
+          "url": "https://oura.keith20.dev/api/sql",
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
@@ -3711,7 +3711,7 @@
           "root_selector": "results",
           "source": "url",
           "type": "json",
-          "url": "https://oura-cf.keith20.workers.dev/api/sql",
+          "url": "https://oura.keith20.dev/api/sql",
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
@@ -3813,7 +3813,7 @@
           "root_selector": "results",
           "source": "url",
           "type": "json",
-          "url": "https://oura-cf.keith20.workers.dev/api/sql",
+          "url": "https://oura.keith20.dev/api/sql",
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
