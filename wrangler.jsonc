@@ -17,5 +17,11 @@
 			"database_id": "782c3449-0a87-4ba8-a93a-bbb151749743",
 			"migrations_dir": "migrations"
 		}
+	],
+	"routes": [
+		{
+			"pattern": "oura.keith20.dev",
+			"custom_domain": true
+		}
 	]
 }
