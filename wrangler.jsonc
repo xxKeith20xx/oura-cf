@@ -3,7 +3,7 @@
 	"name": "oura-cf",
 	"preview_urls": false,
 	"main": "src/index.ts",
-	"compatibility_date": "2025-12-25",
+	"compatibility_date": "2025-11-17",
 	"workers_dev": false,
 	"custom_domains": ["oura.keith20.dev"],
 	"triggers": {

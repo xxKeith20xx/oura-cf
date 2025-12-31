@@ -1,7 +1,3 @@
-Next:
-secure repo
-clean token table?
-
 # Backfill script
 
 ```bash
