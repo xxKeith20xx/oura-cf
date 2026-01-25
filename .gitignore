@@ -168,3 +168,4 @@ dist
 .env*
 !.env.example
 .wrangler/
+.ruff_cache/
