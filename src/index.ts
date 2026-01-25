@@ -157,12 +157,12 @@ export default {
 				);
 			}
 
-			if (!env.oura_db || typeof (env.oura_db as any).prepare !== 'function') {
-				return withCors(
-					Response.json({ error: 'D1 binding missing or misconfigured (oura_db)' }, { status: 500 }),
-					origin
-				);
-			}
+		if (!env.oura_db) {
+			return withCors(
+				Response.json({ error: 'D1 binding missing or misconfigured (oura_db)' }, { status: 500 }),
+				origin
+			);
+		}
 
 			const err = url.searchParams.get('error');
 			if (err) {
@@ -229,7 +229,7 @@ export default {
 			);
 		}
 
-		if (!env.oura_db || typeof (env.oura_db as any).prepare !== 'function') {
+		if (!env.oura_db) {
 			return withCors(
 				Response.json({ error: 'D1 binding missing or misconfigured (oura_db)' }, { status: 500 }),
 				origin
@@ -988,15 +988,6 @@ function toReal(v: unknown): number | null {
 	return null;
 }
 
-function buildOuraUrl(endpoint: string, startDate: string, endDate: string): string {
-	if (endpoint === 'heartrate') {
-		const startDatetime = `${startDate}T00:00:00Z`;
-		const endDatetime = `${endDate}T00:00:00Z`;
-		return `https://api.ouraring.com/v2/usercollection/heartrate?start_datetime=${encodeURIComponent(startDatetime)}&end_datetime=${encodeURIComponent(endDatetime)}`;
-	}
-	return `https://api.ouraring.com/v2/usercollection/${endpoint}?start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}`;
-}
-
 async function ingestResource(
 	env: Env,
 	r: OuraResource,
@@ -1045,7 +1036,7 @@ async function ingestResource(
 			return;
 		}
 
-		const apiResponse = json as OuraApiResponse<any>;
+		const apiResponse = json as OuraApiResponse<unknown>;
 		const data = apiResponse.data;
 		if (Array.isArray(data) && data.length) {
 			await saveToD1(env, r.resource, data);
