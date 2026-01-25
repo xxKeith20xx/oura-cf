@@ -103,9 +103,18 @@ export default {
 	}
 
 	// Favicon - browsers automatically request this, don't require auth
-	if (url.pathname === '/favicon.ico') {
+	if (url.pathname === '/favicon.ico' || url.pathname === '/favicon.svg') {
+		const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+		<text y="0.9em" font-size="90">💍</text>
+	</svg>`;
+		
 		return withCors(
-			new Response(null, { status: 404 }),
+			new Response(svg, {
+				headers: {
+					'Content-Type': 'image/svg+xml',
+					'Cache-Control': 'public, max-age=31536000',
+				},
+			}),
 			origin
 		);
 	}
