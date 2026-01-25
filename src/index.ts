@@ -122,13 +122,13 @@ export default {
 			callbackUrl.pathname = '/oauth/callback';
 			callbackUrl.search = '';
 
-			const scopes = (
-				env.OURA_SCOPES ??
-				'email personal daily heartrate workout tag session spo2 stress heart_health ring_configuration'
-			)
-				.split(/[\s+]+/)
-				.filter(Boolean)
-				.join(' ');
+		const scopes = (
+			env.OURA_SCOPES ??
+			'email personal daily heartrate workout tag session spo2 stress heart_health ring_configuration'
+		)
+			.split(/\s+/)
+			.filter(Boolean)
+			.join(' ');
 
 			if (!env.OURA_CLIENT_ID) {
 				return withCors(
@@ -230,11 +230,12 @@ export default {
 			}
 		}
 
-		if (url.pathname === '/api/sql') {
-			return withCors(new Response('Method Not Allowed', { status: 405 }), origin);
-		}
+	if (url.pathname === '/api/sql') {
+		return withCors(new Response('Method Not Allowed', { status: 405 }), origin);
+	}
 
-    // Serve data to Grafana
+	// Serve all data to Grafana (root endpoint only)
+	if (url.pathname === '/') {
 		try {
 			const { results } = await env.oura_db
 				.prepare('SELECT * FROM daily_summaries ORDER BY day ASC')
@@ -249,6 +250,10 @@ export default {
 				origin
 			);
 		}
+	}
+
+	// No matching endpoint
+	return withCors(new Response('Not Found', { status: 404 }), origin);
   }
 };
 
