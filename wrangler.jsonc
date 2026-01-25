@@ -3,11 +3,11 @@
 	"name": "oura-cf",
 	"preview_urls": false,
 	"main": "src/index.ts",
-	"compatibility_date": "2025-11-17",
+	"compatibility_date": "2026-01-20",
 	"workers_dev": false,
 	"custom_domains": ["oura.keith20.dev"],
 	"triggers": {
-    "crons": ["0 1,13 * * *"]
+    "crons": ["0 0,12,18 * * *"]
   },
 	"observability": {
 		"enabled": true
