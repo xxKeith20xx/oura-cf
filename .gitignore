@@ -169,3 +169,5 @@ dist
 !.env.example
 .wrangler/
 .ruff_cache/
+# OpenCode session context (local only)
+.opencode/
