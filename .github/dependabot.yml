@@ -1,0 +1,32 @@
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"  # Only check once per week (not daily)
+      day: "monday"
+      time: "09:00"
+    open-pull-requests-limit: 3  # Max 3 PRs at a time (not 10+)
+    groups:
+      # Group all dev dependencies into ONE PR
+      development-dependencies:
+        patterns:
+          - "@cloudflare/*"
+          - "wrangler"
+          - "typescript"
+          - "vitest"
+        update-types:
+          - "minor"
+          - "patch"
+      # Security updates get their own PR (reviewed quickly)
+      security-updates:
+        patterns:
+          - "*"
+        update-types:
+          - "security"
+    # Auto-label PRs for easy filtering
+    labels:
+      - "dependencies"
+      - "automerge"  # Can set up GitHub Actions to auto-merge these
+    commit-message:
+      prefix: "chore(deps)"  # Conventional Commits format

@@ -88,23 +88,26 @@ export default {
 		}
 
 	if (url.pathname === '/health') {
-		// Collect all request headers
-		const headers: Record<string, string> = {};
-		request.headers.forEach((value, key) => {
-			headers[key] = value;
-		});
+		// Rate limit: 1 request per minute per IP for health checks
+		const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
+		const rateLimitKey = `health:${clientIP}`;
+		const { success } = await env.RATE_LIMITER.limit({ key: rateLimitKey });
+		if (!success) {
+			return withCors(
+				Response.json(
+					{ error: 'Rate limit exceeded. Max 1 request per 60 seconds.' },
+					{ status: 429 }
+				),
+				origin
+			);
+		}
 
+		// Minimal health check response (no sensitive metadata)
 		return withCors(
 			Response.json({
 				status: 'ok',
 				timestamp: new Date().toISOString(),
 				version: '1.0.0',
-				request: {
-					headers: headers,
-					method: request.method,
-					url: request.url,
-					cf: request.cf, // Cloudflare-specific request properties
-				},
 			}),
 			origin
 		);
@@ -128,6 +131,20 @@ export default {
 	}
 
 	if (url.pathname === '/oauth/callback') {
+			// Rate limit: Prevent OAuth callback abuse (1 request per 10 seconds per IP)
+			const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
+			const rateLimitKey = `oauth:${clientIP}`;
+			const { success } = await env.RATE_LIMITER.limit({ key: rateLimitKey });
+			if (!success) {
+				return withCors(
+					Response.json(
+						{ error: 'Rate limit exceeded. Please wait before retrying.' },
+						{ status: 429 }
+					),
+					origin
+				);
+			}
+
 			if (!env.oura_db || typeof (env.oura_db as any).prepare !== 'function') {
 				return withCors(
 					Response.json({ error: 'D1 binding missing or misconfigured (oura_db)' }, { status: 500 }),
@@ -183,6 +200,22 @@ export default {
     if (auth !== `Bearer ${env.GRAFANA_SECRET}`) {
 			return withCors(new Response('Unauthorized', { status: 401 }), origin);
     }
+
+		// Rate limit authenticated endpoints to prevent abuse if token leaks
+		// Allows 60 requests per minute per IP (1 per second sustained)
+		const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
+		const authRateLimitKey = `auth:${clientIP}`;
+		const { success: authRateLimit } = await env.RATE_LIMITER.limit({ key: authRateLimitKey });
+		
+		if (!authRateLimit) {
+			return withCors(
+				Response.json(
+					{ error: 'Rate limit exceeded. Maximum 60 requests per minute.' },
+					{ status: 429 }
+				),
+				origin
+			);
+		}
 
 		if (!env.oura_db || typeof (env.oura_db as any).prepare !== 'function') {
 			return withCors(
@@ -496,29 +529,80 @@ async function syncData(
 	offsetDays = 0,
 	resourceFilter: Set<string> | null = null
 ) {
+	const syncStartTime = Date.now();
 	const resourcesAll = await loadOuraResourcesFromOpenApi(env);
 	const resources = resourceFilter
 		? resourcesAll.filter((r) => resourceFilter.has(r.resource))
 		: resourcesAll;
 
-	for (const r of resources) {
-		if (r.queryMode === 'none') {
-			await ingestResource(env, r, null);
-			continue;
-		}
+	// Process all resources in parallel for faster syncs
+	// Rate limit: 5000 req/5min (1000 req/min), we're using ~18 resources = well under limit
+	const results = await Promise.allSettled(
+		resources.map(async (r) => {
+			try {
+				if (r.queryMode === 'none') {
+					await ingestResource(env, r, null);
+					return { resource: r.resource, success: true, requests: 1 };
+				}
 
-		const chunkDays = getChunkDaysForResource(r);
+				const chunkDays = getChunkDaysForResource(r);
+				let requestCount = 0;
 
-		for (let i = 0; i < totalDays; i += chunkDays) {
-			const windowDays = Math.min(chunkDays, totalDays - i);
-			const start = new Date(Date.now() - (offsetDays + i + windowDays) * 86400000)
-				.toISOString()
-				.split('T')[0];
-			const end = new Date(Date.now() - (offsetDays + i) * 86400000)
-				.toISOString()
-				.split('T')[0];
-			await ingestResource(env, r, { startDate: start, endDate: end });
-		}
+				// Process time windows sequentially per resource to avoid pagination issues
+				for (let i = 0; i < totalDays; i += chunkDays) {
+					const windowDays = Math.min(chunkDays, totalDays - i);
+					const start = new Date(Date.now() - (offsetDays + i + windowDays) * 86400000)
+						.toISOString()
+						.split('T')[0];
+					const end = new Date(Date.now() - (offsetDays + i) * 86400000)
+						.toISOString()
+						.split('T')[0];
+					await ingestResource(env, r, { startDate: start, endDate: end });
+					requestCount++;
+				}
+
+				return { resource: r.resource, success: true, requests: requestCount };
+			} catch (err) {
+				console.error('Resource sync failed', {
+					resource: r.resource,
+					error: err instanceof Error ? err.message : String(err),
+					stack: err instanceof Error ? err.stack : undefined,
+					timestamp: new Date().toISOString(),
+				});
+				return { resource: r.resource, success: false, error: err };
+			}
+		})
+	);
+
+	// Log sync summary
+	const successful = results.filter((r) => r.status === 'fulfilled' && r.value.success).length;
+	const failed = results.filter((r) => r.status === 'rejected' || (r.status === 'fulfilled' && !r.value.success)).length;
+	const totalRequests = results
+		.filter((r) => r.status === 'fulfilled')
+		.reduce((sum, r) => sum + (r.value.requests || 0), 0);
+	const duration = Date.now() - syncStartTime;
+
+	console.log('Sync completed', {
+		totalResources: resources.length,
+		successful,
+		failed,
+		totalRequests,
+		durationMs: duration,
+		durationSec: (duration / 1000).toFixed(2),
+		timestamp: new Date().toISOString(),
+	});
+
+	// Log failed resources for debugging
+	const failedResources = results
+		.filter((r) => r.status === 'rejected' || (r.status === 'fulfilled' && !r.value.success))
+		.map((r) => (r.status === 'fulfilled' ? r.value.resource : 'unknown'));
+	
+	if (failedResources.length > 0) {
+		console.warn('Failed resources', {
+			resources: failedResources,
+			count: failedResources.length,
+			timestamp: new Date().toISOString(),
+		});
 	}
 }
 
@@ -557,9 +641,10 @@ async function saveToD1(env: Env, endpoint: string, data: any[]) {
 				readiness_sleep_balance=excluded.readiness_sleep_balance,
 				updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`
 		);
-		const stmts = data.map((d) => {
+		const stmts = [];
+		for (const d of data) {
 			const c = d?.contributors ?? {};
-			return stmt.bind(
+			stmts.push(stmt.bind(
 				d.day,
 				toInt(d.score),
 				toInt(c.activity_balance),
@@ -570,8 +655,8 @@ async function saveToD1(env: Env, endpoint: string, data: any[]) {
 				toInt(c.recovery_index),
 				toInt(c.resting_heart_rate),
 				toInt(c.sleep_balance)
-			);
-		});
+			));
+		}
 		if (stmts.length) await env.oura_db.batch(stmts);
 	}
 
@@ -591,9 +676,10 @@ async function saveToD1(env: Env, endpoint: string, data: any[]) {
 				sleep_total_sleep=excluded.sleep_total_sleep,
 				updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`
 		);
-		const stmts = data.map((d) => {
+		const stmts = [];
+		for (const d of data) {
 			const c = d?.contributors ?? {};
-			return stmt.bind(
+			stmts.push(stmt.bind(
 				d.day,
 				toInt(d.score),
 				toInt(c.deep_sleep),
@@ -603,8 +689,8 @@ async function saveToD1(env: Env, endpoint: string, data: any[]) {
 				toInt(c.restfulness),
 				toInt(c.timing),
 				toInt(c.total_sleep)
-			);
-		});
+			));
+		}
 		if (stmts.length) await env.oura_db.batch(stmts);
 	}
 
@@ -626,9 +712,10 @@ async function saveToD1(env: Env, endpoint: string, data: any[]) {
 				activity_training_volume=excluded.activity_training_volume,
 				updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`
 		);
-		const stmts = data.map((d) => {
+		const stmts = [];
+		for (const d of data) {
 			const c = d?.contributors ?? {};
-			return stmt.bind(
+			stmts.push(stmt.bind(
 				d.day,
 				toInt(d.score),
 				toInt(d.steps),
@@ -640,8 +727,8 @@ async function saveToD1(env: Env, endpoint: string, data: any[]) {
 				toInt(c.stay_active),
 				toInt(c.training_frequency),
 				toInt(c.training_volume)
-			);
-		});
+			));
+		}
 		if (stmts.length) await env.oura_db.batch(stmts);
 	}
 
@@ -654,7 +741,10 @@ async function saveToD1(env: Env, endpoint: string, data: any[]) {
 				stress_index=excluded.stress_index,
 				updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`
 		);
-		const stmts = data.map((d) => stmt.bind(d.day, toInt(d.stress_high ?? d.day_summary)));
+		const stmts = [];
+		for (const d of data) {
+			stmts.push(stmt.bind(d.day, toInt(d.stress_high ?? d.day_summary)));
+		}
 		if (stmts.length) await env.oura_db.batch(stmts);
 	}
 
@@ -669,10 +759,11 @@ async function saveToD1(env: Env, endpoint: string, data: any[]) {
 				resilience_contributors_stress=excluded.resilience_contributors_stress,
 				updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`
 		);
-		const stmts = data.map((d) => {
+		const stmts = [];
+		for (const d of data) {
 			const c = d?.contributors ?? {};
-			return stmt.bind(d.day, d.level ?? null, toInt(c.sleep_recovery), toInt(c.daytime_recovery));
-		});
+			stmts.push(stmt.bind(d.day, d.level ?? null, toInt(c.sleep_recovery), toInt(c.daytime_recovery)));
+		}
 		if (stmts.length) await env.oura_db.batch(stmts);
 	}
 
@@ -686,9 +777,10 @@ async function saveToD1(env: Env, endpoint: string, data: any[]) {
 				spo2_breathing_disturbance_index=excluded.spo2_breathing_disturbance_index,
 				updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`
 		);
-		const stmts = data.map((d) =>
-			stmt.bind(d.day, toReal(d.spo2_percentage?.average), toInt(d.breathing_disturbance_index))
-		);
+		const stmts = [];
+		for (const d of data) {
+			stmts.push(stmt.bind(d.day, toReal(d.spo2_percentage?.average), toInt(d.breathing_disturbance_index)));
+		}
 		if (stmts.length) await env.oura_db.batch(stmts);
 	}
 
@@ -701,7 +793,10 @@ async function saveToD1(env: Env, endpoint: string, data: any[]) {
 				cv_age_offset=excluded.cv_age_offset,
 				updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`
 		);
-		const stmts = data.map((d) => stmt.bind(d.day, toInt(d.vascular_age)));
+		const stmts = [];
+		for (const d of data) {
+			stmts.push(stmt.bind(d.day, toInt(d.vascular_age)));
+		}
 		if (stmts.length) await env.oura_db.batch(stmts);
 	}
 
@@ -714,7 +809,10 @@ async function saveToD1(env: Env, endpoint: string, data: any[]) {
 				vo2_max=excluded.vo2_max,
 				updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`
 		);
-		const stmts = data.map((d) => stmt.bind(d.day, toReal(d.vo2_max)));
+		const stmts = [];
+		for (const d of data) {
+			stmts.push(stmt.bind(d.day, toReal(d.vo2_max)));
+		}
 		if (stmts.length) await env.oura_db.batch(stmts);
 	}
 
@@ -738,8 +836,9 @@ async function saveToD1(env: Env, endpoint: string, data: any[]) {
 				light_duration=excluded.light_duration,
 				awake_duration=excluded.awake_duration`
 		);
-		const stmts = data.map((d) =>
-			stmt.bind(
+		const stmts = [];
+		for (const d of data) {
+			stmts.push(stmt.bind(
 				d.id,
 				d.day,
 				d.bedtime_start ?? null,
@@ -754,8 +853,8 @@ async function saveToD1(env: Env, endpoint: string, data: any[]) {
 				toInt(d.rem_sleep_duration),
 				toInt(d.light_sleep_duration),
 				toInt(d.awake_time)
-			)
-		);
+			));
+		}
 		if (stmts.length) await env.oura_db.batch(stmts);
 	}
 
@@ -799,8 +898,9 @@ async function saveToD1(env: Env, endpoint: string, data: any[]) {
 				distance=excluded.distance,
 				hr_avg=excluded.hr_avg`
 		);
-		const stmts = data.map((d) =>
-			stmt.bind(
+		const stmts = [];
+		for (const d of data) {
+			stmts.push(stmt.bind(
 				d.id,
 				d.start_datetime ?? null,
 				d.end_datetime ?? null,
@@ -809,8 +909,8 @@ async function saveToD1(env: Env, endpoint: string, data: any[]) {
 				toReal(d.calories),
 				toReal(d.distance),
 				toReal(d.average_heart_rate)
-			)
-		);
+			));
+		}
 		if (stmts.length) await env.oura_db.batch(stmts);
 	}
 
@@ -826,16 +926,17 @@ async function saveToD1(env: Env, endpoint: string, data: any[]) {
 				hr_avg=excluded.hr_avg,
 				mood=excluded.mood`
 		);
-		const stmts = data.map((d) =>
-			stmt.bind(
+		const stmts = [];
+		for (const d of data) {
+			stmts.push(stmt.bind(
 				d.id,
 				d.start_datetime ?? null,
 				d.end_datetime ?? null,
 				d.type ?? null,
 				toReal(d.heart_rate?.average),
 				d.mood ?? null
-			)
-		);
+			));
+		}
 		if (stmts.length) await env.oura_db.batch(stmts);
 	}
 
@@ -849,9 +950,10 @@ async function saveToD1(env: Env, endpoint: string, data: any[]) {
 				tag_type=excluded.tag_type,
 				comment=excluded.comment`
 		);
-		const stmts = data.map((d) =>
-			stmt.bind(d.id, d.day ?? null, d.tag_type_code ?? d.tags?.[0] ?? null, d.comment ?? null)
-		);
+		const stmts = [];
+		for (const d of data) {
+			stmts.push(stmt.bind(d.id, d.day ?? null, d.tag_type_code ?? d.tags?.[0] ?? null, d.comment ?? null));
+		}
 		if (stmts.length) await env.oura_db.batch(stmts);
 	}
 }
