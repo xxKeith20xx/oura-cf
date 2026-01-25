@@ -113,7 +113,7 @@ export default {
 			Response.json({
 				status: 'ok',
 				timestamp: new Date().toISOString(),
-				version: '1.0.0',
+				version: '1.0.1',
 				request: {
 					headers: headers,
 					method: request.method,
