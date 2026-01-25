@@ -8,9 +8,6 @@
 		"nodejs_compat"
 	],
 	"workers_dev": false,
-	"custom_domains": [
-		"oura.keith20.dev"
-	],
 	"triggers": {
 		"crons": [
 			"0 1,12,18 * * *"
