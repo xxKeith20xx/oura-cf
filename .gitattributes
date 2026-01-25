@@ -1,0 +1,15 @@
+# Ensure consistent line endings across all platforms
+* text=auto eol=lf
+
+# Explicitly mark shell scripts as text with LF
+*.sh text eol=lf
+
+# Binary files
+*.json binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary

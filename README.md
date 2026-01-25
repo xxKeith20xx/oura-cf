@@ -76,7 +76,7 @@ A Cloudflare Worker that syncs Oura Ring health data to a D1 database and serves
 
 - [Cloudflare account](https://dash.cloudflare.com/sign-up) (free tier works)
 - [Oura Ring](https://ouraring.com/) with active subscription
-- [Node.js 20+](https://nodejs.org/) installed
+- [Node.js 22+](https://nodejs.org/) installed
 - [Wrangler CLI](https://developers.cloudflare.com/workers/wrangler/install-and-update/)
 
 ### Installation
@@ -413,5 +413,3 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ---
 
 **Project Repository**: [github.com/xxKeith20xx/oura-cf](https://github.com/xxKeith20xx/oura-cf)
-
-<!-- Testing automerge workflow -->

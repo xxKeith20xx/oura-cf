@@ -2,6 +2,25 @@
 	"name": "oura-vault",
 	"version": "1.0.1",
 	"private": true,
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/xxKeith20xx/oura-cf.git"
+	},
+	"bugs": {
+		"url": "https://github.com/xxKeith20xx/oura-cf/issues"
+	},
+	"homepage": "https://github.com/xxKeith20xx/oura-cf#readme",
+	"keywords": [
+		"oura-ring",
+		"cloudflare-workers",
+		"d1-database",
+		"grafana",
+		"health-data",
+		"fitness-tracking"
+	],
+	"engines": {
+		"node": ">=22.0.0"
+	},
 	"scripts": {
 		"deploy": "wrangler deploy",
 		"deploy:cf": "wrangler d1 migrations apply oura-db --remote && wrangler deploy",
