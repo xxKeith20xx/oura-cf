@@ -102,7 +102,15 @@ export default {
 		);
 	}
 
-		if (url.pathname === '/oauth/callback') {
+	// Favicon - browsers automatically request this, don't require auth
+	if (url.pathname === '/favicon.ico') {
+		return withCors(
+			new Response(null, { status: 404 }),
+			origin
+		);
+	}
+
+	if (url.pathname === '/oauth/callback') {
 			if (!env.oura_db || typeof (env.oura_db as any).prepare !== 'function') {
 				return withCors(
 					Response.json({ error: 'D1 binding missing or misconfigured (oura_db)' }, { status: 500 }),
