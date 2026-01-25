@@ -1,5 +1,6 @@
 export interface Env {
 	oura_db: D1Database;
+	RATE_LIMITER: RateLimit;
 	GRAFANA_SECRET: string;
 	OURA_CLIENT_ID?: string;
 	OURA_CLIENT_SECRET?: string;
@@ -49,11 +50,9 @@ interface OuraApiResponse<T> {
 // In-memory cache for OpenAPI spec resources
 let cachedOuraResources: OuraResource[] | null = null;
 
-// Rate limiting and validation constants
+// Validation constants
 const MAX_SQL_LENGTH = 10_000;
 const MAX_BACKFILL_DAYS = 3650;
-const BACKFILL_COOLDOWN_MS = 60_000; // 1 minute between backfills
-let lastBackfillTime = 0;
 
 export default {
   // 1. Cron Trigger: Automated Daily Sync
@@ -188,13 +187,14 @@ export default {
 
 
     if (url.pathname === "/backfill") {
-		// Rate limiting: prevent backfill spam
-		const now = Date.now();
-		if (now - lastBackfillTime < BACKFILL_COOLDOWN_MS) {
-			const remainingMs = BACKFILL_COOLDOWN_MS - (now - lastBackfillTime);
+		// Rate limiting: prevent backfill spam (1 request per 60 seconds per IP)
+		const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
+		const rateLimitKey = `backfill:${clientIP}`;
+		const { success } = await env.RATE_LIMITER.limit({ key: rateLimitKey });
+		if (!success) {
 			return withCors(
 				Response.json(
-					{ error: `Backfill cooldown active. Try again in ${Math.ceil(remainingMs / 1000)}s` },
+					{ error: 'Rate limit exceeded. Please wait 60 seconds between backfill requests.' },
 					{ status: 429 }
 				),
 				origin
@@ -213,9 +213,6 @@ export default {
 		}
 		const resourcesParam = url.searchParams.get('resources');
 		const resourceFilter = parseResourceFilter(resourcesParam);
-		
-		// Update last backfill time
-		lastBackfillTime = now;
 		
 		ctx.waitUntil(syncData(env, totalDays, offsetDays, resourceFilter));
 		return withCors(new Response('Backfill initiated.', { status: 202 }), origin);
@@ -722,7 +719,12 @@ async function ingestResource(
 	let page = 0;
 
 	const accessToken = await getOuraAccessToken(env).catch((err) => {
-		console.log('Failed to get Oura access token', String(err).slice(0, 500));
+		console.error('Failed to get Oura access token', {
+			error: err instanceof Error ? err.message : String(err),
+			stack: err instanceof Error ? err.stack : undefined,
+			timestamp: new Date().toISOString(),
+			resource: r.resource,
+		});
 		return null;
 	});
 	if (!accessToken) return;
@@ -735,13 +737,24 @@ async function ingestResource(
 
 		if (!res.ok) {
 			const text = await res.text().catch(() => '');
-			console.log('Oura fetch failed', r.resource, res.status, text.slice(0, 500));
+			console.error('Oura fetch failed', {
+				resource: r.resource,
+				status: res.status,
+				statusText: res.statusText,
+				responseBody: text.slice(0, 500),
+				timestamp: new Date().toISOString(),
+				url: url,
+			});
 			return;
 		}
 
 		const json = await res.json().catch(() => null);
 		if (!json || typeof json !== 'object') {
-			console.log('Invalid JSON response from Oura', r.resource);
+			console.error('Invalid JSON response from Oura', {
+				resource: r.resource,
+				timestamp: new Date().toISOString(),
+				url: url,
+			});
 			return;
 		}
 
@@ -756,7 +769,12 @@ async function ingestResource(
 		page += 1;
 		if (!nextToken) return;
 		if (page > 1000) {
-			console.log('Oura pagination safeguard triggered', r.resource);
+			console.warn('Oura pagination safeguard triggered', {
+				resource: r.resource,
+				pageCount: page,
+				timestamp: new Date().toISOString(),
+				message: 'Exceeded maximum pagination limit of 1000 pages',
+			});
 			return;
 		}
 	}
@@ -808,7 +826,12 @@ async function loadOuraResourcesFromOpenApi(): Promise<OuraResource[]> {
 
 	const res = await fetch('https://cloud.ouraring.com/v2/static/json/openapi-1.27.json');
 	if (!res.ok) {
-		console.log('Failed to fetch Oura OpenAPI spec', res.status);
+		console.error('Failed to fetch Oura OpenAPI spec', {
+			status: res.status,
+			statusText: res.statusText,
+			timestamp: new Date().toISOString(),
+			message: 'Unable to load Oura API resource definitions',
+		});
 		return [];
 	}
 	const spec = (await res.json().catch(() => null)) as any;
@@ -1018,7 +1041,18 @@ function stripLeadingSqlComments(sql: string): string {
 
 function withCors(response: Response, origin: string | null): Response {
 	const headers = new Headers(response.headers);
-	headers.set('Access-Control-Allow-Origin', origin ?? '*');
+	
+	// Whitelist allowed origins
+	const allowedOrigins = [
+		'https://oura.keith20.dev',
+		'http://localhost:3000',
+		'http://localhost:8787', // Wrangler dev server
+	];
+	
+	// Validate origin and use first allowed origin as fallback
+	const allowOrigin = origin && allowedOrigins.includes(origin) ? origin : allowedOrigins[0];
+	
+	headers.set('Access-Control-Allow-Origin', allowOrigin);
 	headers.set('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
 	headers.set('Access-Control-Allow-Headers', 'Authorization,Content-Type');
 	headers.set('Vary', 'Origin');
