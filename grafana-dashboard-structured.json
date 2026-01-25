@@ -4002,22 +4002,24 @@
                           "type": "string"
                         },
                         {
-                          "selector": "records",
+                          "selector": "record_count",
                           "text": "records",
                           "type": "number"
+                        },
+                        {
+                          "selector": "updated_at",
+                          "text": "updated_at",
+                          "type": "timestamp"
                         }
                       ],
                       "format": "table",
                       "parser": "backend",
-                      "root_selector": "results",
+                      "root_selector": "",
                       "source": "url",
                       "type": "json",
-                      "url": "https://oura.keith20.dev/api/sql",
+                      "url": "https://oura.keith20.dev/api/stats",
                       "url_options": {
-                        "body_content_type": "application/json",
-                        "body_type": "raw",
-                        "data": "{\"sql\":\"SELECT 'daily_summaries' AS resource, MIN(day) AS min_day, MAX(day) AS max_day, COUNT(*) AS records FROM daily_summaries UNION ALL SELECT 'sleep_episodes', MIN(day), MAX(day), COUNT(*) FROM sleep_episodes UNION ALL SELECT 'heart_rate_samples', MIN(substr(timestamp,1,10)), MAX(substr(timestamp,1,10)), COUNT(*) FROM heart_rate_samples UNION ALL SELECT 'activity_logs', MIN(substr(start_datetime,1,10)), MAX(substr(start_datetime,1,10)), COUNT(*) FROM activity_logs\",\"params\":[]}",
-                        "method": "POST"
+                        "method": "GET"
                       }
                     },
                     "version": "v0"

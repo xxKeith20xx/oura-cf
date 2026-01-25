@@ -258,8 +258,39 @@ export default {
 		const resourcesParam = url.searchParams.get('resources');
 		const resourceFilter = parseResourceFilter(resourcesParam);
 		
-		ctx.waitUntil(syncData(env, totalDays, offsetDays, resourceFilter));
-		return withCors(new Response('Backfill initiated.', { status: 202 }), origin);
+		// Choose sync strategy based on workload size to avoid waitUntil timeout
+		// waitUntil has 30-second limit after response; large syncs may exceed this
+		if (totalDays <= 1) {
+			// Small sync: use waitUntil (fast response, completes in background)
+			ctx.waitUntil(
+				Promise.all([
+					syncData(env, totalDays, offsetDays, resourceFilter),
+					updateTableStats(env), // Also update stats
+				])
+			);
+			return withCors(
+				new Response('Backfill initiated in background.', { status: 202 }),
+				origin
+			);
+		} else {
+			// Large backfill: synchronous (client waits, but guaranteed completion)
+			try {
+				await syncData(env, totalDays, offsetDays, resourceFilter);
+				await updateTableStats(env);
+				return withCors(
+					new Response(`Backfill completed: ${totalDays} days synced.`, { status: 200 }),
+					origin
+				);
+			} catch (err) {
+				return withCors(
+					Response.json({
+						error: 'Backfill failed',
+						details: err instanceof Error ? err.message : String(err).slice(0, 500)
+					}, { status: 500 }),
+					origin
+				);
+			}
+		}
     }
 
 		if (url.pathname === '/api/daily_summaries') {
@@ -734,14 +765,24 @@ async function saveToD1(env: Env, endpoint: string, data: any[]) {
 			'INSERT INTO heart_rate_samples (timestamp, bpm, source) VALUES (?, ?, ?) ' +
 				'ON CONFLICT(timestamp) DO UPDATE SET bpm=excluded.bpm, source=excluded.source'
 		);
-		const stmts = data
-			.map((d) => {
+		
+		// Process in batches to reduce memory usage (heart rate can have 10k+ samples)
+		const BATCH_SIZE = 500;
+		for (let i = 0; i < data.length; i += BATCH_SIZE) {
+			const batch = data.slice(i, i + BATCH_SIZE);
+			const stmts = [];
+			
+			for (const d of batch) {
 				const timestamp = typeof d?.timestamp === 'string' ? d.timestamp : null;
-				if (!timestamp) return null;
-				return stmt.bind(timestamp, toInt(d.bpm), d.source ?? null);
-			})
-			.filter(Boolean) as any[];
-		if (stmts.length) await env.oura_db.batch(stmts);
+				if (!timestamp) continue;
+				stmts.push(stmt.bind(timestamp, toInt(d.bpm), d.source ?? null));
+			}
+			
+			if (stmts.length) {
+				await env.oura_db.batch(stmts);
+			}
+		}
+		return;
 	}
 
 	// workout -> activity_logs
