@@ -361,10 +361,9 @@ oura-cf/
 ├── src/
 │   └── index.ts              # Main Worker code (1,300+ lines)
 ├── migrations/
-│   ├── 0001_init.sql         # Core tables
-│   ├── 0002_oauth_tokens.sql
-│   ├── 0003_activity_logs.sql
-│   └── 0004_table_stats.sql  # Statistics cache
+│   ├── 0001_init.sql         # Core tables (daily_summaries, sleep_episodes, heart_rate_samples, activity_logs)
+│   ├── 0002_oauth_tokens.sql # OAuth token storage
+│   └── 0004_table_stats.sql  # Pre-computed statistics cache
 ├── wrangler.jsonc            # Cloudflare configuration
 ├── package.json              # Dependencies
 ├── tsconfig.json             # TypeScript config
