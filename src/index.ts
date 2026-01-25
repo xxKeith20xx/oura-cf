@@ -1,6 +1,7 @@
 export interface Env {
 	oura_db: D1Database;
 	RATE_LIMITER: RateLimit;
+	OURA_CACHE: KVNamespace;
 	GRAFANA_SECRET: string;
 	OURA_CLIENT_ID?: string;
 	OURA_CLIENT_SECRET?: string;
@@ -47,12 +48,14 @@ interface OuraApiResponse<T> {
 	next_token?: string;
 }
 
-// In-memory cache for OpenAPI spec resources
-let cachedOuraResources: OuraResource[] | null = null;
+// In-memory cache for OAuth tokens (reset on cold start)
+let tokenCache: { token: string; expiresAt: number } | null = null;
 
 // Validation constants
 const MAX_SQL_LENGTH = 10_000;
 const MAX_BACKFILL_DAYS = 3650;
+const OPENAPI_CACHE_TTL = 86400; // 24 hours
+const RESPONSE_CACHE_TTL = 300; // 5 minutes (use 'private' cache for authenticated endpoints)
 
 export default {
   // 1. Cron Trigger: Automated Daily Sync
@@ -275,7 +278,16 @@ export default {
 					`SELECT * FROM daily_summaries ${whereSql} ORDER BY day ASC`
 				);
 				const out = args.length ? await stmt.bind(...args).all() : await stmt.all();
-				return withCors(Response.json(out.results), origin);
+				return withCors(
+					new Response(JSON.stringify(out.results), {
+						headers: {
+							'Content-Type': 'application/json',
+							// Use 'private' cache since endpoint requires authentication
+							'Cache-Control': `private, max-age=${RESPONSE_CACHE_TTL}`,
+						},
+					}),
+					origin
+				);
 			} catch (err) {
 				return withCors(
 					Response.json(
@@ -346,7 +358,16 @@ export default {
 			const { results } = await env.oura_db
 				.prepare('SELECT * FROM daily_summaries ORDER BY day ASC')
 				.all();
-			return withCors(Response.json(results), origin);
+			return withCors(
+				new Response(JSON.stringify(results), {
+					headers: {
+						'Content-Type': 'application/json',
+						// Use 'private' cache since endpoint requires authentication
+						'Cache-Control': `private, max-age=${RESPONSE_CACHE_TTL}`,
+					},
+				}),
+				origin
+			);
 		} catch (err) {
 			return withCors(
 				Response.json(
@@ -369,7 +390,7 @@ async function syncData(
 	offsetDays = 0,
 	resourceFilter: Set<string> | null = null
 ) {
-	const resourcesAll = await loadOuraResourcesFromOpenApi();
+	const resourcesAll = await loadOuraResourcesFromOpenApi(env);
 	const resources = resourceFilter
 		? resourcesAll.filter((r) => resourceFilter.has(r.resource))
 		: resourcesAll;
@@ -854,12 +875,21 @@ async function fetchWithRetry(
 	}
 }
 
-async function loadOuraResourcesFromOpenApi(): Promise<OuraResource[]> {
-	// Return cached resources if available
-	if (cachedOuraResources) {
-		return cachedOuraResources;
+async function loadOuraResourcesFromOpenApi(env: Env): Promise<OuraResource[]> {
+	// Try KV cache first (24 hour TTL)
+	try {
+		const cached = await env.OURA_CACHE.get('openapi_resources', 'json');
+		if (cached && Array.isArray(cached)) {
+			return cached as OuraResource[];
+		}
+	} catch (err) {
+		console.warn('Failed to read from KV cache', {
+			error: err instanceof Error ? err.message : String(err),
+			timestamp: new Date().toISOString(),
+		});
 	}
 
+	// Fetch and parse OpenAPI spec
 	const res = await fetch('https://cloud.ouraring.com/v2/static/json/openapi-1.27.json');
 	if (!res.ok) {
 		console.error('Failed to fetch Oura OpenAPI spec', {
@@ -910,8 +940,17 @@ async function loadOuraResourcesFromOpenApi(): Promise<OuraResource[]> {
 
 	out.sort((a, b) => a.resource.localeCompare(b.resource));
 	
-	// Cache the resources for future requests
-	cachedOuraResources = out;
+	// Cache in KV for 24 hours
+	try {
+		await env.OURA_CACHE.put('openapi_resources', JSON.stringify(out), {
+			expirationTtl: OPENAPI_CACHE_TTL,
+		});
+	} catch (err) {
+		console.warn('Failed to write to KV cache', {
+			error: err instanceof Error ? err.message : String(err),
+			timestamp: new Date().toISOString(),
+		});
+	}
 	
 	return out;
 }
@@ -1024,6 +1063,11 @@ async function upsertOauthToken(env: Env, userId: string, token: OuraTokenRespon
 }
 
 async function getOuraAccessToken(env: Env): Promise<string> {
+	// Check in-memory cache first (survives within same Worker instance)
+	if (tokenCache && tokenCache.expiresAt > Date.now() + 60_000) {
+		return tokenCache.token;
+	}
+
 	const userId = 'default';
 	const row = await env.oura_db
 		.prepare('SELECT access_token, refresh_token, expires_at FROM oura_oauth_tokens WHERE user_id = ?')
@@ -1032,7 +1076,11 @@ async function getOuraAccessToken(env: Env): Promise<string> {
 
 	if (!row) {
 		// No token in database, fall back to PAT if available
-		if (env.OURA_PAT) return env.OURA_PAT;
+		if (env.OURA_PAT) {
+			// Cache PAT with a far future expiration (it doesn't expire)
+			tokenCache = { token: env.OURA_PAT, expiresAt: Date.now() + 86400000 };
+			return env.OURA_PAT;
+		}
 		throw new Error('No OAuth token found. Visit /oauth/start to authorize.');
 	}
 
@@ -1044,14 +1092,31 @@ async function getOuraAccessToken(env: Env): Promise<string> {
 			? expiresAt > Date.now() + 60_000
 			: !!accessToken;
 
-	if (hasValidAccess && accessToken) return accessToken;
+	if (hasValidAccess && accessToken) {
+		// Cache the valid token
+		tokenCache = {
+			token: accessToken,
+			expiresAt: expiresAt !== null && Number.isFinite(expiresAt) ? expiresAt : Date.now() + 3600000,
+		};
+		return accessToken;
+	}
+
 	if (refreshToken) {
 		const refreshed = await refreshAccessToken(env, refreshToken);
 		await upsertOauthToken(env, userId, refreshed);
+		// Cache the refreshed token
+		const newExpiresAt =
+			typeof refreshed.expires_in === 'number' && Number.isFinite(refreshed.expires_in)
+				? Date.now() + Math.max(0, refreshed.expires_in - 60) * 1000
+				: Date.now() + 3600000;
+		tokenCache = { token: refreshed.access_token, expiresAt: newExpiresAt };
 		return refreshed.access_token;
 	}
 
-	if (env.OURA_PAT) return env.OURA_PAT;
+	if (env.OURA_PAT) {
+		tokenCache = { token: env.OURA_PAT, expiresAt: Date.now() + 86400000 };
+		return env.OURA_PAT;
+	}
 	throw new Error('No OAuth refresh token found. Visit /oauth/start to authorize.');
 }
 
