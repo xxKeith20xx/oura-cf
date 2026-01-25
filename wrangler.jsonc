@@ -7,7 +7,7 @@
 	"workers_dev": false,
 	"custom_domains": ["oura.keith20.dev"],
 	"triggers": {
-    "crons": ["0 0,12,18 * * *"]
+    "crons": ["0 1,12,18 * * *"]
   },
 	"observability": {
 		"enabled": true
