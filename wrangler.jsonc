@@ -1,7 +1,6 @@
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "oura-cf",
-	"account_id": "REDACTED_ACCOUNT_ID",
 	"preview_urls": false,
 	"main": "src/index.ts",
 	"compatibility_date": "2026-01-20",

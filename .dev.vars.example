@@ -1,0 +1,15 @@
+# Cloudflare Account ID (required for wrangler deploy)
+# Get this from: wrangler whoami
+# Or set as environment variable: export CLOUDFLARE_ACCOUNT_ID="your-account-id"
+CLOUDFLARE_ACCOUNT_ID=
+
+# Grafana API authentication token
+GRAFANA_SECRET=
+
+# Oura OAuth credentials (optional, only if using OAuth flow)
+OURA_CLIENT_ID=
+OURA_CLIENT_SECRET=
+OURA_SCOPES=email personal daily heartrate workout tag session spo2 stress heart_health ring_configuration
+
+# Oura Personal Access Token (alternative to OAuth)
+OURA_PAT=
