@@ -5,11 +5,13 @@ If you want to prevent accidental direct pushes to master, follow these steps.
 ## Why Use Branch Protection?
 
 **Without protection:**
+
 ```bash
 git push origin master  # Goes straight to production
 ```
 
 **With protection:**
+
 ```bash
 git push origin feature-branch  # Create PR first
 gh pr create
@@ -31,12 +33,14 @@ gh pr merge  # After review/checks
 ## Result
 
 Now when you try to push directly to master:
+
 ```bash
 $ git push origin master
 ! [remote rejected] master -> master (protected branch)
 ```
 
 Instead, you'll need to:
+
 ```bash
 # Create feature branch
 git checkout -b fix-something
@@ -52,6 +56,7 @@ gh pr merge --squash
 ## Bypass Protection (Emergency)
 
 If you need to push directly in an emergency:
+
 1. GitHub → Settings → Branches → Edit rule
 2. Temporarily delete the rule
 3. Push your changes
@@ -60,11 +65,13 @@ If you need to push directly in an emergency:
 ## Do You Need This?
 
 **Use branch protection if:**
+
 - ✅ You want forced review of changes
 - ✅ You want CI checks to block bad code
 - ✅ You work with others on this repo
 
 **Skip branch protection if:**
+
 - ✅ You're the only developer
 - ✅ You trust yourself not to push bad code
 - ✅ You test locally before pushing

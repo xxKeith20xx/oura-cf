@@ -35,7 +35,7 @@ export default [
 			'no-console': 'off', // console.log is fine in Workers for debugging
 
 			// ===== Best Practices =====
-			'eqeqeq': ['error', 'always'], // Always use === instead of ==
+			eqeqeq: ['error', 'always'], // Always use === instead of ==
 			'no-var': 'error', // Use const/let instead of var
 			'prefer-const': 'warn', // Use const when variable is never reassigned
 
