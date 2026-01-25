@@ -4,16 +4,29 @@
 	"preview_urls": false,
 	"main": "src/index.ts",
 	"compatibility_date": "2026-01-20",
-	"compatibility_flags": ["nodejs_compat"],
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
 	"workers_dev": false,
-	"custom_domains": ["oura.keith20.dev"],
+	"custom_domains": [
+		"oura.keith20.dev"
+	],
 	"triggers": {
-    "crons": ["0 1,12,18 * * *"]
-  },
+		"crons": [
+			"0 1,12,18 * * *"
+		]
+	},
 	"observability": {
 		"enabled": true,
 		"head_sampling_rate": 1
 	},
+	"kv_namespaces": [
+		{
+			"binding": "OURA_CACHE",
+			"id": "16e97e2cc4bf430baad10361bbf0ba27",
+			"remote": true
+		}
+	],
 	"d1_databases": [
 		{
 			"binding": "oura_db",
