@@ -5,14 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Security
+- **BREAKING**: Removed `account_id` from `wrangler.jsonc` (use `CLOUDFLARE_ACCOUNT_ID` env var)
+- Redacted account_id from git history (force push required)
+- Added separate rate limiter for authenticated endpoints (60 req/min)
+- Fixed Grafana dashboard 429 errors caused by shared rate limiter
+
+### Added
+- `.dev.vars.example` file to document environment variables
+- Documentation for `CLOUDFLARE_ACCOUNT_ID` environment variable in README
+
+### Changed
+- Rate limiting now uses two separate limiters:
+  - `RATE_LIMITER`: 1 req/60s for public endpoints (`/health`, `/oauth/callback`)
+  - `AUTH_RATE_LIMITER`: 60 req/min for authenticated endpoints
+
 ## [1.0.0] - 2026-01-26
 
 ### Added
 - MIT License for open source distribution
 - Rate limiting for public endpoints (`/health`, `/oauth/callback`)
+- Rate limiting for authenticated endpoints (60 requests per minute)
 - Comprehensive request/response logging for sync operations
 - Performance tracking metrics (request counts, duration, success/failure rates)
 - OpenCode style guide for consistent formatting
+- Dependabot configuration with weekly grouped updates
+- Auto-merge workflow for patch version updates
+- CONTRIBUTING.md with contribution guidelines
 
 ### Changed
 - **PERFORMANCE**: Implemented parallel resource fetching for 3-5x faster data syncs
@@ -37,6 +58,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rate limiting added to prevent abuse of public endpoints
 - OAuth callback now rate-limited (1 req/60s per IP)
 - Health check endpoint rate-limited (1 req/60s per IP)
+- Authenticated endpoints rate-limited (60 req/min per IP)
 
 ## [0.0.0] - 2025-12-26 to 2026-01-25
 
@@ -106,5 +128,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Security review documentation
 - Performance optimization guides
 
+[Unreleased]: https://github.com/xxKeith20xx/oura-cf/compare/v1.0.0...HEAD
 [1.0.0]: https://github.com/xxKeith20xx/oura-cf/compare/v0.0.0...v1.0.0
 [0.0.0]: https://github.com/xxKeith20xx/oura-cf/releases/tag/v0.0.0
