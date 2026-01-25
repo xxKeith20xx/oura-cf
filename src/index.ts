@@ -60,7 +60,12 @@ const RESPONSE_CACHE_TTL = 300; // 5 minutes (use 'private' cache for authentica
 export default {
   // 1. Cron Trigger: Automated Daily Sync
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext) {
-		ctx.waitUntil(syncData(env, 3, 0, null));
+		ctx.waitUntil(
+			Promise.all([
+				syncData(env, 3, 0, null),
+				updateTableStats(env), // Update stats cache
+			])
+		);
   },
 
   // 2. HTTP Fetch: API and Manual Backfill
@@ -333,8 +338,22 @@ export default {
 
 		try {
 			const result = await env.oura_db.prepare(sql).bind(...params).all();
+			
+			// Detect stats/metadata queries (COUNT(*) across all tables)
+			// These queries scan millions of rows but results change infrequently
+			const isStatsQuery = /COUNT\(\*\).*FROM\s+heart_rate_samples/i.test(sql) &&
+				/UNION\s+ALL/i.test(sql);
+			
+			// Use longer cache for stats queries (1 hour vs 5 minutes)
+			const cacheTTL = isStatsQuery ? 3600 : RESPONSE_CACHE_TTL;
+			
 			return withCors(
-				Response.json({ results: result.results, meta: result.meta }),
+				new Response(JSON.stringify({ results: result.results, meta: result.meta }), {
+					headers: {
+						'Content-Type': 'application/json',
+						'Cache-Control': `private, max-age=${cacheTTL}`,
+					},
+				}),
 				origin
 			);
 		} catch (err) {
@@ -350,6 +369,62 @@ export default {
 
 	if (url.pathname === '/api/sql') {
 		return withCors(new Response('Method Not Allowed', { status: 405 }), origin);
+	}
+
+	// Dedicated endpoint for table statistics (fast, approximate counts)
+	if (url.pathname === '/api/stats') {
+		try {
+			// Use pre-computed stats table if available (most accurate)
+			const { results: cachedStats } = await env.oura_db
+				.prepare('SELECT resource, min_day, max_day, record_count, updated_at FROM table_stats ORDER BY resource')
+				.all();
+			
+			if (cachedStats && cachedStats.length > 0) {
+				return withCors(
+					new Response(JSON.stringify(cachedStats), {
+						headers: {
+							'Content-Type': 'application/json',
+							'Cache-Control': 'private, max-age=3600',
+						},
+					}),
+					origin
+				);
+			}
+
+			// Fallback: compute stats on-demand (slow but accurate)
+			// This will only run if table_stats is empty (first time)
+			console.warn('table_stats empty, computing on-demand (slow)', {
+				timestamp: new Date().toISOString(),
+			});
+			
+			const stats = await env.oura_db.prepare(`
+				SELECT 'daily_summaries' AS resource, MIN(day) AS min_day, MAX(day) AS max_day, COUNT(*) AS record_count FROM daily_summaries
+				UNION ALL
+				SELECT 'sleep_episodes', MIN(day), MAX(day), COUNT(*) FROM sleep_episodes
+				UNION ALL
+				SELECT 'heart_rate_samples', MIN(substr(timestamp,1,10)), MAX(substr(timestamp,1,10)), COUNT(*) FROM heart_rate_samples
+				UNION ALL
+				SELECT 'activity_logs', MIN(substr(start_datetime,1,10)), MAX(substr(start_datetime,1,10)), COUNT(*) FROM activity_logs
+			`).all();
+			
+			return withCors(
+				new Response(JSON.stringify(stats.results), {
+					headers: {
+						'Content-Type': 'application/json',
+						'Cache-Control': 'private, max-age=60', // Short cache since it's a fallback
+					},
+				}),
+				origin
+			);
+		} catch (err) {
+			return withCors(
+				Response.json(
+					{ error: 'Failed to fetch table stats', details: String(err).slice(0, 500) },
+					{ status: 500 }
+				),
+				origin
+			);
+		}
 	}
 
 	// Serve all data to Grafana (root endpoint only)
@@ -1137,6 +1212,70 @@ function stripLeadingSqlComments(sql: string): string {
 			continue;
 		}
 		return trimmed;
+	}
+}
+
+async function updateTableStats(env: Env): Promise<void> {
+	try {
+		// Compute stats for each table (this is expensive but runs once per sync)
+		const stats = [
+			{
+				resource: 'daily_summaries',
+				query: `SELECT 'daily_summaries' AS resource, MIN(day) AS min_day, MAX(day) AS max_day, COUNT(*) AS record_count FROM daily_summaries`,
+			},
+			{
+				resource: 'sleep_episodes',
+				query: `SELECT 'sleep_episodes' AS resource, MIN(day) AS min_day, MAX(day) AS max_day, COUNT(*) AS record_count FROM sleep_episodes`,
+			},
+			{
+				resource: 'heart_rate_samples',
+				query: `SELECT 'heart_rate_samples' AS resource, MIN(substr(timestamp,1,10)) AS min_day, MAX(substr(timestamp,1,10)) AS max_day, COUNT(*) AS record_count FROM heart_rate_samples`,
+			},
+			{
+				resource: 'activity_logs',
+				query: `SELECT 'activity_logs' AS resource, MIN(substr(start_datetime,1,10)) AS min_day, MAX(substr(start_datetime,1,10)) AS max_day, COUNT(*) AS record_count FROM activity_logs`,
+			},
+		];
+
+		// Update stats for each table
+		const updateStatements = [];
+		for (const stat of stats) {
+			const result = await env.oura_db.prepare(stat.query).first<{
+				resource: string;
+				min_day: string | null;
+				max_day: string | null;
+				record_count: number;
+			}>();
+
+			if (result) {
+				const stmt = env.oura_db.prepare(
+					`INSERT INTO table_stats (resource, min_day, max_day, record_count, updated_at)
+					VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+					ON CONFLICT(resource) DO UPDATE SET
+						min_day=excluded.min_day,
+						max_day=excluded.max_day,
+						record_count=excluded.record_count,
+						updated_at=excluded.updated_at`
+				);
+				updateStatements.push(
+					stmt.bind(result.resource, result.min_day, result.max_day, result.record_count)
+				);
+			}
+		}
+
+		if (updateStatements.length) {
+			await env.oura_db.batch(updateStatements);
+		}
+
+		console.log('Table stats updated successfully', {
+			timestamp: new Date().toISOString(),
+			tables_updated: updateStatements.length,
+		});
+	} catch (err) {
+		console.error('Failed to update table stats', {
+			error: err instanceof Error ? err.message : String(err),
+			timestamp: new Date().toISOString(),
+		});
 	}
 }
 
