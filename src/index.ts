@@ -79,9 +79,28 @@ export default {
 			);
 		}
 
-		if (url.pathname === '/health') {
-			return withCors(Response.json({ ok: true }), origin);
-		}
+	if (url.pathname === '/health') {
+		// Collect all request headers
+		const headers: Record<string, string> = {};
+		request.headers.forEach((value, key) => {
+			headers[key] = value;
+		});
+
+		return withCors(
+			Response.json({
+				status: 'ok',
+				timestamp: new Date().toISOString(),
+				version: '1.0.0',
+				request: {
+					headers: headers,
+					method: request.method,
+					url: request.url,
+					cf: request.cf, // Cloudflare-specific request properties
+				},
+			}),
+			origin
+		);
+	}
 
 		if (url.pathname === '/oauth/callback') {
 			if (!env.oura_db || typeof (env.oura_db as any).prepare !== 'function') {
