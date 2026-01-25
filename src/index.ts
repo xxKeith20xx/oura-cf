@@ -16,6 +16,36 @@ type OuraResource = {
 	paginated: boolean;
 };
 
+// Database row types
+interface OuraOAuthStateRow {
+	state: string;
+	user_id: string;
+	created_at: number;
+}
+
+interface OuraOAuthTokenRow {
+	user_id: string;
+	access_token: string;
+	refresh_token: string | null;
+	expires_at: number | null;
+	scope: string | null;
+	token_type: string | null;
+}
+
+// Oura API response types
+interface OuraTokenResponse {
+	access_token: string;
+	refresh_token?: string;
+	expires_in?: number;
+	scope?: string;
+	token_type?: string;
+}
+
+interface OuraApiResponse<T> {
+	data: T[];
+	next_token?: string;
+}
+
 // In-memory cache for OpenAPI spec resources
 let cachedOuraResources: OuraResource[] | null = null;
 
@@ -72,32 +102,32 @@ export default {
 				return withCors(Response.json({ error: 'Missing code/state' }, { status: 400 }), origin);
 			}
 
-			const stateRow = await env.oura_db
-				.prepare('SELECT user_id, created_at FROM oura_oauth_states WHERE state = ?')
-				.bind(state)
-				.first();
-			if (!stateRow) {
-				return withCors(Response.json({ error: 'Invalid state' }, { status: 400 }), origin);
-			}
+		const stateRow = await env.oura_db
+			.prepare('SELECT user_id, created_at FROM oura_oauth_states WHERE state = ?')
+			.bind(state)
+			.first<OuraOAuthStateRow>();
+		if (!stateRow) {
+			return withCors(Response.json({ error: 'Invalid state' }, { status: 400 }), origin);
+		}
 
-			const createdAt = Number((stateRow as any).created_at);
-			if (!Number.isFinite(createdAt) || Date.now() - createdAt > 15 * 60_000) {
-				await env.oura_db
-					.prepare('DELETE FROM oura_oauth_states WHERE state = ?')
-					.bind(state)
-					.run();
-				return withCors(Response.json({ error: 'State expired' }, { status: 400 }), origin);
-			}
-
+		const createdAt = Number(stateRow.created_at);
+		if (!Number.isFinite(createdAt) || Date.now() - createdAt > 15 * 60_000) {
 			await env.oura_db
 				.prepare('DELETE FROM oura_oauth_states WHERE state = ?')
 				.bind(state)
 				.run();
+			return withCors(Response.json({ error: 'State expired' }, { status: 400 }), origin);
+		}
 
-			const callbackUrl = new URL(request.url);
-			callbackUrl.search = '';
-			const token = await exchangeAuthorizationCodeForToken(env, code, callbackUrl.toString());
-			await upsertOauthToken(env, (stateRow as any).user_id ?? 'default', token);
+		await env.oura_db
+			.prepare('DELETE FROM oura_oauth_states WHERE state = ?')
+			.bind(state)
+			.run();
+
+		const callbackUrl = new URL(request.url);
+		callbackUrl.search = '';
+		const token = await exchangeAuthorizationCodeForToken(env, code, callbackUrl.toString());
+		await upsertOauthToken(env, stateRow.user_id ?? 'default', token);
 			return withCors(
 				new Response('OK', {
 					status: 200,
@@ -709,14 +739,20 @@ async function ingestResource(
 			return;
 		}
 
-		const json = (await res.json().catch(() => null)) as any;
-		const data = json?.data;
+		const json = await res.json().catch(() => null);
+		if (!json || typeof json !== 'object') {
+			console.log('Invalid JSON response from Oura', r.resource);
+			return;
+		}
+
+		const apiResponse = json as OuraApiResponse<any>;
+		const data = apiResponse.data;
 		if (Array.isArray(data) && data.length) {
 			await saveToD1(env, r.resource, data);
 		}
 
 		if (!r.paginated) return;
-		nextToken = typeof json?.next_token === 'string' ? json.next_token : null;
+		nextToken = apiResponse.next_token ?? null;
 		page += 1;
 		if (!nextToken) return;
 		if (page > 1000) {
@@ -831,14 +867,6 @@ function isReadOnlySql(sql: string): boolean {
 	return !/\b(insert|update|delete|drop|alter|create|replace|vacuum|pragma|attach|detach)\b/i.test(normalized);
 }
 
-type OuraTokenResponse = {
-	access_token: string;
-	refresh_token?: string;
-	expires_in?: number;
-	scope?: string;
-	token_type?: string;
-};
-
 async function exchangeAuthorizationCodeForToken(
 	env: Env,
 	code: string,
@@ -866,11 +894,17 @@ async function exchangeAuthorizationCodeForToken(
 		const text = await res.text().catch(() => '');
 		throw new Error(`Token exchange failed (${res.status}): ${text.slice(0, 500)}`);
 	}
-	const json = (await res.json().catch(() => null)) as any;
-	if (!json?.access_token || typeof json.access_token !== 'string') {
+	const json = await res.json().catch(() => null);
+	if (!json || typeof json !== 'object') {
+		throw new Error('Token exchange response invalid');
+	}
+	
+	const tokenResponse = json as Partial<OuraTokenResponse>;
+	if (!tokenResponse.access_token || typeof tokenResponse.access_token !== 'string') {
 		throw new Error('Token exchange response missing access_token');
 	}
-	return json as OuraTokenResponse;
+	
+	return tokenResponse as OuraTokenResponse;
 }
 
 async function refreshAccessToken(env: Env, refreshToken: string): Promise<OuraTokenResponse> {
@@ -895,11 +929,17 @@ async function refreshAccessToken(env: Env, refreshToken: string): Promise<OuraT
 		const text = await res.text().catch(() => '');
 		throw new Error(`Token refresh failed (${res.status}): ${text.slice(0, 500)}`);
 	}
-	const json = (await res.json().catch(() => null)) as any;
-	if (!json?.access_token || typeof json.access_token !== 'string') {
+	const json = await res.json().catch(() => null);
+	if (!json || typeof json !== 'object') {
+		throw new Error('Token refresh response invalid');
+	}
+	
+	const tokenResponse = json as Partial<OuraTokenResponse>;
+	if (!tokenResponse.access_token || typeof tokenResponse.access_token !== 'string') {
 		throw new Error('Token refresh response missing access_token');
 	}
-	return json as OuraTokenResponse;
+	
+	return tokenResponse as OuraTokenResponse;
 }
 
 async function upsertOauthToken(env: Env, userId: string, token: OuraTokenResponse): Promise<void> {
@@ -929,13 +969,21 @@ async function getOuraAccessToken(env: Env): Promise<string> {
 	const row = await env.oura_db
 		.prepare('SELECT access_token, refresh_token, expires_at FROM oura_oauth_tokens WHERE user_id = ?')
 		.bind(userId)
-		.first();
+		.first<OuraOAuthTokenRow>();
 
-	const accessToken = typeof (row as any)?.access_token === 'string' ? (row as any).access_token : null;
-	const refreshToken = typeof (row as any)?.refresh_token === 'string' ? (row as any).refresh_token : null;
-	const expiresAt = Number((row as any)?.expires_at);
+	if (!row) {
+		// No token in database, fall back to PAT if available
+		if (env.OURA_PAT) return env.OURA_PAT;
+		throw new Error('No OAuth token found. Visit /oauth/start to authorize.');
+	}
+
+	const accessToken = row.access_token;
+	const refreshToken = row.refresh_token;
+	const expiresAt = row.expires_at;
 	const hasValidAccess =
-		accessToken && Number.isFinite(expiresAt) ? expiresAt > Date.now() + 60_000 : !!accessToken;
+		accessToken && expiresAt !== null && Number.isFinite(expiresAt)
+			? expiresAt > Date.now() + 60_000
+			: !!accessToken;
 
 	if (hasValidAccess && accessToken) return accessToken;
 	if (refreshToken) {
