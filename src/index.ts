@@ -16,6 +16,15 @@ type OuraResource = {
 	paginated: boolean;
 };
 
+// In-memory cache for OpenAPI spec resources
+let cachedOuraResources: OuraResource[] | null = null;
+
+// Rate limiting and validation constants
+const MAX_SQL_LENGTH = 10_000;
+const MAX_BACKFILL_DAYS = 3650;
+const BACKFILL_COOLDOWN_MS = 60_000; // 1 minute between backfills
+let lastBackfillTime = 0;
+
 export default {
   // 1. Cron Trigger: Automated Daily Sync
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext) {
@@ -149,20 +158,37 @@ export default {
 
 
     if (url.pathname === "/backfill") {
-			const daysParam = url.searchParams.get('days');
-			const days = daysParam ? Number(daysParam) : 730;
-			const offsetParam = url.searchParams.get('offset_days') ?? url.searchParams.get('offsetDays');
-			const offsetRaw = offsetParam ? Number(offsetParam) : 0;
-			const offsetDays = Number.isFinite(offsetRaw) && offsetRaw >= 0 ? Math.min(offsetRaw, 3650) : 0;
-			const maxTotalDays = Math.max(0, 3650 - offsetDays);
-			const totalDays = Number.isFinite(days) && days > 0 ? Math.min(days, maxTotalDays) : 730;
-			if (totalDays <= 0) {
-				return withCors(Response.json({ error: 'Backfill window out of range' }, { status: 400 }), origin);
-			}
-			const resourcesParam = url.searchParams.get('resources');
-			const resourceFilter = parseResourceFilter(resourcesParam);
-			ctx.waitUntil(syncData(env, totalDays, offsetDays, resourceFilter));
-			return withCors(new Response('Backfill initiated.', { status: 202 }), origin);
+		// Rate limiting: prevent backfill spam
+		const now = Date.now();
+		if (now - lastBackfillTime < BACKFILL_COOLDOWN_MS) {
+			const remainingMs = BACKFILL_COOLDOWN_MS - (now - lastBackfillTime);
+			return withCors(
+				Response.json(
+					{ error: `Backfill cooldown active. Try again in ${Math.ceil(remainingMs / 1000)}s` },
+					{ status: 429 }
+				),
+				origin
+			);
+		}
+
+		const daysParam = url.searchParams.get('days');
+		const days = daysParam ? Number(daysParam) : 730;
+		const offsetParam = url.searchParams.get('offset_days') ?? url.searchParams.get('offsetDays');
+		const offsetRaw = offsetParam ? Number(offsetParam) : 0;
+		const offsetDays = Number.isFinite(offsetRaw) && offsetRaw >= 0 ? Math.min(offsetRaw, MAX_BACKFILL_DAYS) : 0;
+		const maxTotalDays = Math.max(0, MAX_BACKFILL_DAYS - offsetDays);
+		const totalDays = Number.isFinite(days) && days > 0 ? Math.min(days, maxTotalDays) : 730;
+		if (totalDays <= 0) {
+			return withCors(Response.json({ error: 'Backfill window out of range' }, { status: 400 }), origin);
+		}
+		const resourcesParam = url.searchParams.get('resources');
+		const resourceFilter = parseResourceFilter(resourcesParam);
+		
+		// Update last backfill time
+		lastBackfillTime = now;
+		
+		ctx.waitUntil(syncData(env, totalDays, offsetDays, resourceFilter));
+		return withCors(new Response('Backfill initiated.', { status: 202 }), origin);
     }
 
 		if (url.pathname === '/api/daily_summaries') {
@@ -198,37 +224,54 @@ export default {
 			}
 		}
 
-		if (url.pathname === '/api/sql' && request.method === 'POST') {
-			const body = (await request.json().catch(() => null)) as
-				| { sql?: unknown; params?: unknown }
-				| null;
+	if (url.pathname === '/api/sql' && request.method === 'POST') {
+		const body = (await request.json().catch(() => null)) as
+			| { sql?: unknown; params?: unknown }
+			| null;
 
-			const sql = typeof body?.sql === 'string' ? body.sql.trim() : '';
-			const params = Array.isArray(body?.params) ? body.params : [];
-			if (sql.length > 50_000) {
-				return withCors(new Response('SQL too large', { status: 400 }), origin);
-			}
-
-			if (!isReadOnlySql(sql)) {
-				return withCors(new Response('Only read-only SQL is allowed', { status: 400 }), origin);
-			}
-
-			try {
-				const result = await env.oura_db.prepare(sql).bind(...params).all();
-				return withCors(
-					Response.json({ results: result.results, meta: result.meta }),
-					origin
-				);
-			} catch (err) {
-				return withCors(
-					Response.json(
-						{ error: 'D1 query failed', details: String(err).slice(0, 500) },
-						{ status: 500 }
-					),
-					origin
-				);
-			}
+		const sql = typeof body?.sql === 'string' ? body.sql.trim() : '';
+		const params = Array.isArray(body?.params) ? body.params : [];
+		
+		// Validation: SQL length limit
+		if (sql.length > MAX_SQL_LENGTH) {
+			return withCors(
+				Response.json(
+					{ error: `SQL too large (max ${MAX_SQL_LENGTH} characters)` },
+					{ status: 400 }
+				),
+				origin
+			);
 		}
+
+		// Validation: Read-only queries only
+		if (!isReadOnlySql(sql)) {
+			return withCors(new Response('Only read-only SQL is allowed', { status: 400 }), origin);
+		}
+
+		// Validation: Parameter count limit
+		if (params.length > 100) {
+			return withCors(
+				Response.json({ error: 'Too many parameters (max 100)' }, { status: 400 }),
+				origin
+			);
+		}
+
+		try {
+			const result = await env.oura_db.prepare(sql).bind(...params).all();
+			return withCors(
+				Response.json({ results: result.results, meta: result.meta }),
+				origin
+			);
+		} catch (err) {
+			return withCors(
+				Response.json(
+					{ error: 'D1 query failed', details: String(err).slice(0, 500) },
+					{ status: 500 }
+				),
+				origin
+			);
+		}
+	}
 
 	if (url.pathname === '/api/sql') {
 		return withCors(new Response('Method Not Allowed', { status: 405 }), origin);
@@ -722,6 +765,11 @@ async function fetchWithRetry(
 }
 
 async function loadOuraResourcesFromOpenApi(): Promise<OuraResource[]> {
+	// Return cached resources if available
+	if (cachedOuraResources) {
+		return cachedOuraResources;
+	}
+
 	const res = await fetch('https://cloud.ouraring.com/v2/static/json/openapi-1.27.json');
 	if (!res.ok) {
 		console.log('Failed to fetch Oura OpenAPI spec', res.status);
@@ -766,6 +814,10 @@ async function loadOuraResourcesFromOpenApi(): Promise<OuraResource[]> {
 	}
 
 	out.sort((a, b) => a.resource.localeCompare(b.resource));
+	
+	// Cache the resources for future requests
+	cachedOuraResources = out;
+	
 	return out;
 }
 
