@@ -1,8 +1,8 @@
 name: Dependabot Auto-Merge
 
 on:
-  pull_request:
-    types: [opened, reopened]
+  pull_request_target:
+    types: [opened, synchronize, reopened]
 
 permissions:
   pull-requests: write
@@ -13,11 +13,16 @@ jobs:
     runs-on: ubuntu-latest
     if: github.actor == 'dependabot[bot]'
     steps:
-      - name: Auto-merge patch updates
+      - name: Fetch Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: '${{ secrets.GITHUB_TOKEN }}'
+
+      - name: Auto-merge patch and minor updates
+        if: |
+          steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
+          steps.metadata.outputs.update-type == 'version-update:semver-minor'
         run: gh pr merge --auto --squash "${{ github.event.pull_request.html_url }}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        # Only auto-merge if:
-        # 1. It's a patch update (0.0.X)
-        # 2. All checks pass
-        # 3. Not a major/minor version bump
