@@ -102,6 +102,9 @@ npx wrangler d1 create oura-db
 # Apply database migrations
 npx wrangler d1 migrations apply oura-db --remote
 
+# Set your Cloudflare account ID (get from: npx wrangler whoami)
+export CLOUDFLARE_ACCOUNT_ID=your-account-id
+
 # Deploy to Cloudflare
 npx wrangler deploy
 ```
