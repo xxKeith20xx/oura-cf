@@ -6,23 +6,24 @@ ESLint is a **linter** - a tool that analyzes your code for potential errors, bu
 
 ### Why Use ESLint?
 
-| Benefit | Example |
-|---------|---------|
-| **Catch bugs early** | Unused variables, unreachable code |
-| **Enforce code style** | Consistent indentation, quotes, semicolons |
-| **Best practices** | Avoid `==` (use `===`), no `var` (use `const`/`let`) |
-| **Team consistency** | Everyone writes code the same way |
-| **Learn as you code** | ESLint explains WHY something is wrong |
+| Benefit                | Example                                              |
+| ---------------------- | ---------------------------------------------------- |
+| **Catch bugs early**   | Unused variables, unreachable code                   |
+| **Enforce code style** | Consistent indentation, quotes, semicolons           |
+| **Best practices**     | Avoid `==` (use `===`), no `var` (use `const`/`let`) |
+| **Team consistency**   | Everyone writes code the same way                    |
+| **Learn as you code**  | ESLint explains WHY something is wrong               |
 
 ### Linter vs. Formatter vs. Type Checker
 
-| Tool | Purpose | Example |
-|------|---------|---------|
-| **ESLint** (Linter) | Find bugs & enforce rules | "This variable is never used" |
-| **Prettier** (Formatter) | Format code consistently | "Use tabs, not spaces" |
-| **TypeScript** (Type Checker) | Verify types are correct | "Expected string, got number" |
+| Tool                          | Purpose                   | Example                       |
+| ----------------------------- | ------------------------- | ----------------------------- |
+| **ESLint** (Linter)           | Find bugs & enforce rules | "This variable is never used" |
+| **Prettier** (Formatter)      | Format code consistently  | "Use tabs, not spaces"        |
+| **TypeScript** (Type Checker) | Verify types are correct  | "Expected string, got number" |
 
 **You already have**:
+
 - ✅ Prettier (`.prettierrc` exists)
 - ✅ TypeScript (`tsconfig.json` exists)
 - ❌ ESLint (not set up yet)
@@ -49,57 +50,54 @@ import tseslint from 'typescript-eslint';
 import prettier from 'eslint-config-prettier';
 
 export default [
-  // Recommended base rules
-  js.configs.recommended,
-  ...tseslint.configs.recommended,
-  
-  // Disable rules that conflict with Prettier
-  prettier,
-  
-  // Your custom rules
-  {
-    languageOptions: {
-      globals: {
-        // Cloudflare Workers globals
-        Request: 'readonly',
-        Response: 'readonly',
-        crypto: 'readonly',
-        console: 'readonly',
-      },
-      parserOptions: {
-        project: './tsconfig.json',
-      },
-    },
-    rules: {
-      // Possible errors
-      'no-console': 'off', // Allow console.log in Workers
-      'no-unused-vars': 'off', // Use TypeScript's version
-      '@typescript-eslint/no-unused-vars': ['warn', {
-        argsIgnorePattern: '^_',
-        varsIgnorePattern: '^_',
-      }],
-      
-      // Best practices
-      'eqeqeq': ['error', 'always'], // Always use ===
-      'no-var': 'error', // Use const/let instead
-      'prefer-const': 'warn', // Use const when possible
-      
-      // TypeScript specific
-      '@typescript-eslint/no-explicit-any': 'warn', // Warn on 'any' types
-      '@typescript-eslint/explicit-function-return-type': 'off',
-    },
-  },
-  
-  // Ignore patterns
-  {
-    ignores: [
-      'node_modules/**',
-      'dist/**',
-      '.wrangler/**',
-      '*.config.mjs',
-      '*.config.js',
-    ],
-  },
+	// Recommended base rules
+	js.configs.recommended,
+	...tseslint.configs.recommended,
+
+	// Disable rules that conflict with Prettier
+	prettier,
+
+	// Your custom rules
+	{
+		languageOptions: {
+			globals: {
+				// Cloudflare Workers globals
+				Request: 'readonly',
+				Response: 'readonly',
+				crypto: 'readonly',
+				console: 'readonly',
+			},
+			parserOptions: {
+				project: './tsconfig.json',
+			},
+		},
+		rules: {
+			// Possible errors
+			'no-console': 'off', // Allow console.log in Workers
+			'no-unused-vars': 'off', // Use TypeScript's version
+			'@typescript-eslint/no-unused-vars': [
+				'warn',
+				{
+					argsIgnorePattern: '^_',
+					varsIgnorePattern: '^_',
+				},
+			],
+
+			// Best practices
+			eqeqeq: ['error', 'always'], // Always use ===
+			'no-var': 'error', // Use const/let instead
+			'prefer-const': 'warn', // Use const when possible
+
+			// TypeScript specific
+			'@typescript-eslint/no-explicit-any': 'warn', // Warn on 'any' types
+			'@typescript-eslint/explicit-function-return-type': 'off',
+		},
+	},
+
+	// Ignore patterns
+	{
+		ignores: ['node_modules/**', 'dist/**', '.wrangler/**', '*.config.mjs', '*.config.js'],
+	},
 ];
 ```
 
@@ -109,13 +107,13 @@ Add to `package.json`:
 
 ```json
 {
-  "scripts": {
-    "lint": "eslint .",
-    "lint:fix": "eslint . --fix",
-    "format": "prettier --write .",
-    "format:check": "prettier --check .",
-    "test": "vitest"
-  }
+	"scripts": {
+		"lint": "eslint .",
+		"lint:fix": "eslint . --fix",
+		"format": "prettier --write .",
+		"format:check": "prettier --check .",
+		"test": "vitest"
+	}
 }
 ```
 
@@ -123,11 +121,11 @@ Add to `package.json`:
 
 ### Rule Levels
 
-| Level | Meaning | Behavior |
-|-------|---------|----------|
-| `"off"` or `0` | Disabled | Rule won't run |
-| `"warn"` or `1` | Warning | Shows warning, doesn't fail |
-| `"error"` or `2` | Error | Shows error, fails build |
+| Level            | Meaning  | Behavior                    |
+| ---------------- | -------- | --------------------------- |
+| `"off"` or `0`   | Disabled | Rule won't run              |
+| `"warn"` or `1`  | Warning  | Shows warning, doesn't fail |
+| `"error"` or `2` | Error    | Shows error, fails build    |
 
 ### Common Rules Explained
 
@@ -139,9 +137,11 @@ const x = 5;
 // Rule: "no-var": "error"
 
 // ❌ BAD: Loose equality
-if (x == '5') { }
+if (x == '5') {
+}
 // ✅ GOOD: Strict equality
-if (x === 5) { }
+if (x === 5) {
+}
 // Rule: "eqeqeq": ["error", "always"]
 
 // ❌ BAD: Unused variable
@@ -158,9 +158,9 @@ const x = 5;
 // Rule: "prefer-const": "warn"
 
 // ⚠️ WARNING: Using 'any'
-function getData(): any { }
+function getData(): any {}
 // ✅ BETTER: Specific type
-function getData(): UserData { }
+function getData(): UserData {}
 // Rule: "@typescript-eslint/no-explicit-any": "warn"
 ```
 
@@ -198,6 +198,7 @@ src/index.ts
 ```
 
 **Breaking it down:**
+
 - `src/index.ts` - File with issues
 - `10:7` - Line 10, column 7
 - `error` - Severity level
@@ -209,6 +210,7 @@ src/index.ts
 ### The Problem
 
 ESLint and Prettier can conflict:
+
 - ESLint: "Use single quotes"
 - Prettier: "Use double quotes"
 
@@ -224,9 +226,9 @@ Then in `eslint.config.mjs`, add `prettier` last:
 
 ```javascript
 export default [
-  js.configs.recommended,
-  ...tseslint.configs.recommended,
-  prettier, // Must be last! Disables conflicting rules
+	js.configs.recommended,
+	...tseslint.configs.recommended,
+	prettier, // Must be last! Disables conflicting rules
 ];
 ```
 
@@ -310,7 +312,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      
+
       - run: npm install
       - run: npm run lint
       - run: npm run format:check
@@ -331,14 +333,14 @@ Add to `.vscode/settings.json`:
 
 ```json
 {
-  "editor.codeActionsOnSave": {
-    "source.fixAll.eslint": true
-  },
-  "editor.formatOnSave": true,
-  "editor.defaultFormatter": "esbenp.prettier-vscode",
-  "[typescript]": {
-    "editor.defaultFormatter": "esbenp.prettier-vscode"
-  }
+	"editor.codeActionsOnSave": {
+		"source.fixAll.eslint": true
+	},
+	"editor.formatOnSave": true,
+	"editor.defaultFormatter": "esbenp.prettier-vscode",
+	"[typescript]": {
+		"editor.defaultFormatter": "esbenp.prettier-vscode"
+	}
 }
 ```
 
@@ -380,8 +382,8 @@ npm install --save-dev eslint-config-prettier
 import prettier from 'eslint-config-prettier';
 
 export default [
-  // ... other configs
-  prettier, // Must be last
+	// ... other configs
+	prettier, // Must be last
 ];
 ```
 
@@ -389,19 +391,20 @@ export default [
 
 1. **Start relaxed, get stricter**
    - Begin with warnings, convert to errors over time
-   
 2. **Fix incrementally**
    - Don't fix 1000 errors at once
    - Fix one rule at a time
 
 3. **Ignore generated files**
+
    ```javascript
    {
-     ignores: ['dist/**', '.wrangler/**', 'node_modules/**']
+   	ignores: ['dist/**', '.wrangler/**', 'node_modules/**'];
    }
    ```
 
 4. **Document custom rules**
+
    ```javascript
    rules: {
      // We use 'any' for external API responses that lack types

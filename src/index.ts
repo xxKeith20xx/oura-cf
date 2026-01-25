@@ -59,20 +59,20 @@ const OPENAPI_CACHE_TTL = 86400; // 24 hours
 const RESPONSE_CACHE_TTL = 300; // 5 minutes (use 'private' cache for authenticated endpoints)
 
 export default {
-  // 1. Cron Trigger: Automated Daily Sync
-  async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext) {
+	// 1. Cron Trigger: Automated Daily Sync
+	async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext) {
 		ctx.waitUntil(
 			Promise.all([
 				syncData(env, 3, 0, null),
 				updateTableStats(env), // Update stats cache
-			])
+			]),
 		);
-  },
+	},
 
-  // 2. HTTP Fetch: API and Manual Backfill
-  async fetch(request: Request, env: Env, ctx: ExecutionContext) {
-    const url = new URL(request.url);
-    const auth = request.headers.get("Authorization");
+	// 2. HTTP Fetch: API and Manual Backfill
+	async fetch(request: Request, env: Env, ctx: ExecutionContext) {
+		const url = new URL(request.url);
+		const auth = request.headers.get('Authorization');
 		const origin = request.headers.get('Origin');
 
 		if (request.method === 'OPTIONS') {
@@ -84,85 +84,70 @@ export default {
 						'Access-Control-Allow-Headers': 'Authorization,Content-Type',
 					},
 				}),
-				origin
+				origin,
 			);
 		}
 
-	if (url.pathname === '/health') {
-		// Rate limit: 1 request per minute per IP for health checks
-		const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
-		const rateLimitKey = `health:${clientIP}`;
-		const { success } = await env.RATE_LIMITER.limit({ key: rateLimitKey });
-		if (!success) {
+		if (url.pathname === '/health') {
+			// Rate limit: 1 request per minute per IP for health checks
+			const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
+			const rateLimitKey = `health:${clientIP}`;
+			const { success } = await env.RATE_LIMITER.limit({ key: rateLimitKey });
+			if (!success) {
+				return withCors(Response.json({ error: 'Rate limit exceeded. Max 1 request per 60 seconds.' }, { status: 429 }), origin);
+			}
+
+			// Collect all request headers for debugging
+			const headers: Record<string, string> = {};
+			request.headers.forEach((value, key) => {
+				headers[key] = value;
+			});
+
 			return withCors(
-				Response.json(
-					{ error: 'Rate limit exceeded. Max 1 request per 60 seconds.' },
-					{ status: 429 }
-				),
-				origin
+				Response.json({
+					status: 'ok',
+					timestamp: new Date().toISOString(),
+					version: '1.0.1',
+					request: {
+						headers: headers,
+						method: request.method,
+						url: request.url,
+						cf: request.cf, // Cloudflare-specific request properties
+					},
+				}),
+				origin,
 			);
 		}
 
-		// Collect all request headers for debugging
-		const headers: Record<string, string> = {};
-		request.headers.forEach((value, key) => {
-			headers[key] = value;
-		});
-
-		return withCors(
-			Response.json({
-				status: 'ok',
-				timestamp: new Date().toISOString(),
-				version: '1.0.1',
-				request: {
-					headers: headers,
-					method: request.method,
-					url: request.url,
-					cf: request.cf, // Cloudflare-specific request properties
-				},
-			}),
-			origin
-		);
-	}
-
-	// Favicon - browsers automatically request this, don't require auth
-	if (url.pathname === '/favicon.ico' || url.pathname === '/favicon.svg') {
-		const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+		// Favicon - browsers automatically request this, don't require auth
+		if (url.pathname === '/favicon.ico' || url.pathname === '/favicon.svg') {
+			const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
 		<text y="0.9em" font-size="90">💍</text>
 	</svg>`;
-		
-		return withCors(
-			new Response(svg, {
-				headers: {
-					'Content-Type': 'image/svg+xml',
-					'Cache-Control': 'public, max-age=31536000',
-				},
-			}),
-			origin
-		);
-	}
 
-	if (url.pathname === '/oauth/callback') {
+			return withCors(
+				new Response(svg, {
+					headers: {
+						'Content-Type': 'image/svg+xml',
+						'Cache-Control': 'public, max-age=31536000',
+					},
+				}),
+				origin,
+			);
+		}
+
+		if (url.pathname === '/oauth/callback') {
 			// Rate limit: Prevent OAuth callback abuse (1 request per 10 seconds per IP)
 			const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
 			const rateLimitKey = `oauth:${clientIP}`;
 			const { success } = await env.RATE_LIMITER.limit({ key: rateLimitKey });
 			if (!success) {
-				return withCors(
-					Response.json(
-						{ error: 'Rate limit exceeded. Please wait before retrying.' },
-						{ status: 429 }
-					),
-					origin
-				);
+				return withCors(Response.json({ error: 'Rate limit exceeded. Please wait before retrying.' }, { status: 429 }), origin);
 			}
 
-		if (!env.oura_db) {
-			return withCors(
-				Response.json({ error: 'D1 binding missing or misconfigured (oura_db)' }, { status: 500 }),
-				origin
-			);
-		}
+			if (!env.oura_db) {
+				return withCors(Response.json({ error: 'D1 binding missing or misconfigured (oura_db)' }, { status: 500 }), origin);
+			}
 
 			const err = url.searchParams.get('error');
 			if (err) {
@@ -174,66 +159,51 @@ export default {
 				return withCors(Response.json({ error: 'Missing code/state' }, { status: 400 }), origin);
 			}
 
-		const stateRow = await env.oura_db
-			.prepare('SELECT user_id, created_at FROM oura_oauth_states WHERE state = ?')
-			.bind(state)
-			.first<OuraOAuthStateRow>();
-		if (!stateRow) {
-			return withCors(Response.json({ error: 'Invalid state' }, { status: 400 }), origin);
-		}
-
-		const createdAt = Number(stateRow.created_at);
-		if (!Number.isFinite(createdAt) || Date.now() - createdAt > 15 * 60_000) {
-			await env.oura_db
-				.prepare('DELETE FROM oura_oauth_states WHERE state = ?')
+			const stateRow = await env.oura_db
+				.prepare('SELECT user_id, created_at FROM oura_oauth_states WHERE state = ?')
 				.bind(state)
-				.run();
-			return withCors(Response.json({ error: 'State expired' }, { status: 400 }), origin);
-		}
+				.first<OuraOAuthStateRow>();
+			if (!stateRow) {
+				return withCors(Response.json({ error: 'Invalid state' }, { status: 400 }), origin);
+			}
 
-		await env.oura_db
-			.prepare('DELETE FROM oura_oauth_states WHERE state = ?')
-			.bind(state)
-			.run();
+			const createdAt = Number(stateRow.created_at);
+			if (!Number.isFinite(createdAt) || Date.now() - createdAt > 15 * 60_000) {
+				await env.oura_db.prepare('DELETE FROM oura_oauth_states WHERE state = ?').bind(state).run();
+				return withCors(Response.json({ error: 'State expired' }, { status: 400 }), origin);
+			}
 
-		const callbackUrl = new URL(request.url);
-		callbackUrl.search = '';
-		const token = await exchangeAuthorizationCodeForToken(env, code, callbackUrl.toString());
-		await upsertOauthToken(env, stateRow.user_id ?? 'default', token);
+			await env.oura_db.prepare('DELETE FROM oura_oauth_states WHERE state = ?').bind(state).run();
+
+			const callbackUrl = new URL(request.url);
+			callbackUrl.search = '';
+			const token = await exchangeAuthorizationCodeForToken(env, code, callbackUrl.toString());
+			await upsertOauthToken(env, stateRow.user_id ?? 'default', token);
 			return withCors(
 				new Response('OK', {
 					status: 200,
 					headers: { 'Content-Type': 'text/plain; charset=utf-8' },
 				}),
-				origin
+				origin,
 			);
 		}
 
-    if (auth !== `Bearer ${env.GRAFANA_SECRET}`) {
+		if (auth !== `Bearer ${env.GRAFANA_SECRET}`) {
 			return withCors(new Response('Unauthorized', { status: 401 }), origin);
-    }
+		}
 
 		// Rate limit authenticated endpoints to prevent abuse if token leaks
 		// Allows 60 requests per minute per IP (1 per second sustained)
 		const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
 		const authRateLimitKey = `auth:${clientIP}`;
 		const { success: authRateLimit } = await env.AUTH_RATE_LIMITER.limit({ key: authRateLimitKey });
-		
+
 		if (!authRateLimit) {
-			return withCors(
-				Response.json(
-					{ error: 'Rate limit exceeded. Maximum 60 requests per minute.' },
-					{ status: 429 }
-				),
-				origin
-			);
+			return withCors(Response.json({ error: 'Rate limit exceeded. Maximum 60 requests per minute.' }, { status: 429 }), origin);
 		}
 
 		if (!env.oura_db) {
-			return withCors(
-				Response.json({ error: 'D1 binding missing or misconfigured (oura_db)' }, { status: 500 }),
-				origin
-			);
+			return withCors(Response.json({ error: 'D1 binding missing or misconfigured (oura_db)' }, { status: 500 }), origin);
 		}
 
 		if (url.pathname === '/oauth/start') {
@@ -249,19 +219,13 @@ export default {
 			callbackUrl.pathname = '/oauth/callback';
 			callbackUrl.search = '';
 
-		const scopes = (
-			env.OURA_SCOPES ??
-			'email personal daily heartrate workout tag session spo2 stress heart_health ring_configuration'
-		)
-			.split(/\s+/)
-			.filter(Boolean)
-			.join(' ');
+			const scopes = (env.OURA_SCOPES ?? 'email personal daily heartrate workout tag session spo2 stress heart_health ring_configuration')
+				.split(/\s+/)
+				.filter(Boolean)
+				.join(' ');
 
 			if (!env.OURA_CLIENT_ID) {
-				return withCors(
-					Response.json({ error: 'Missing OURA_CLIENT_ID secret' }, { status: 500 }),
-					origin
-				);
+				return withCors(Response.json({ error: 'Missing OURA_CLIENT_ID secret' }, { status: 500 }), origin);
 			}
 
 			const authUrl = new URL('https://cloud.ouraring.com/oauth/authorize');
@@ -274,69 +238,62 @@ export default {
 			return Response.redirect(authUrl.toString(), 302);
 		}
 
-
-    if (url.pathname === "/backfill") {
-		// Rate limiting: prevent backfill spam (1 request per 60 seconds per IP)
-		const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
-		const rateLimitKey = `backfill:${clientIP}`;
-		const { success } = await env.RATE_LIMITER.limit({ key: rateLimitKey });
-		if (!success) {
-			return withCors(
-				Response.json(
-					{ error: 'Rate limit exceeded. Please wait 60 seconds between backfill requests.' },
-					{ status: 429 }
-				),
-				origin
-			);
-		}
-
-		const daysParam = url.searchParams.get('days');
-		const days = daysParam ? Number(daysParam) : 730;
-		const offsetParam = url.searchParams.get('offset_days') ?? url.searchParams.get('offsetDays');
-		const offsetRaw = offsetParam ? Number(offsetParam) : 0;
-		const offsetDays = Number.isFinite(offsetRaw) && offsetRaw >= 0 ? Math.min(offsetRaw, MAX_BACKFILL_DAYS) : 0;
-		const maxTotalDays = Math.max(0, MAX_BACKFILL_DAYS - offsetDays);
-		const totalDays = Number.isFinite(days) && days > 0 ? Math.min(days, maxTotalDays) : 730;
-		if (totalDays <= 0) {
-			return withCors(Response.json({ error: 'Backfill window out of range' }, { status: 400 }), origin);
-		}
-		const resourcesParam = url.searchParams.get('resources');
-		const resourceFilter = parseResourceFilter(resourcesParam);
-		
-		// Choose sync strategy based on workload size to avoid waitUntil timeout
-		// waitUntil has 30-second limit after response; large syncs may exceed this
-		if (totalDays <= 1) {
-			// Small sync: use waitUntil (fast response, completes in background)
-			ctx.waitUntil(
-				Promise.all([
-					syncData(env, totalDays, offsetDays, resourceFilter),
-					updateTableStats(env), // Also update stats
-				])
-			);
-			return withCors(
-				new Response('Backfill initiated in background.', { status: 202 }),
-				origin
-			);
-		} else {
-			// Large backfill: synchronous (client waits, but guaranteed completion)
-			try {
-				await syncData(env, totalDays, offsetDays, resourceFilter);
-				await updateTableStats(env);
+		if (url.pathname === '/backfill') {
+			// Rate limiting: prevent backfill spam (1 request per 60 seconds per IP)
+			const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
+			const rateLimitKey = `backfill:${clientIP}`;
+			const { success } = await env.RATE_LIMITER.limit({ key: rateLimitKey });
+			if (!success) {
 				return withCors(
-					new Response(`Backfill completed: ${totalDays} days synced.`, { status: 200 }),
-					origin
-				);
-			} catch (err) {
-				return withCors(
-					Response.json({
-						error: 'Backfill failed',
-						details: err instanceof Error ? err.message : String(err).slice(0, 500)
-					}, { status: 500 }),
-					origin
+					Response.json({ error: 'Rate limit exceeded. Please wait 60 seconds between backfill requests.' }, { status: 429 }),
+					origin,
 				);
 			}
+
+			const daysParam = url.searchParams.get('days');
+			const days = daysParam ? Number(daysParam) : 730;
+			const offsetParam = url.searchParams.get('offset_days') ?? url.searchParams.get('offsetDays');
+			const offsetRaw = offsetParam ? Number(offsetParam) : 0;
+			const offsetDays = Number.isFinite(offsetRaw) && offsetRaw >= 0 ? Math.min(offsetRaw, MAX_BACKFILL_DAYS) : 0;
+			const maxTotalDays = Math.max(0, MAX_BACKFILL_DAYS - offsetDays);
+			const totalDays = Number.isFinite(days) && days > 0 ? Math.min(days, maxTotalDays) : 730;
+			if (totalDays <= 0) {
+				return withCors(Response.json({ error: 'Backfill window out of range' }, { status: 400 }), origin);
+			}
+			const resourcesParam = url.searchParams.get('resources');
+			const resourceFilter = parseResourceFilter(resourcesParam);
+
+			// Choose sync strategy based on workload size to avoid waitUntil timeout
+			// waitUntil has 30-second limit after response; large syncs may exceed this
+			if (totalDays <= 1) {
+				// Small sync: use waitUntil (fast response, completes in background)
+				ctx.waitUntil(
+					Promise.all([
+						syncData(env, totalDays, offsetDays, resourceFilter),
+						updateTableStats(env), // Also update stats
+					]),
+				);
+				return withCors(new Response('Backfill initiated in background.', { status: 202 }), origin);
+			} else {
+				// Large backfill: synchronous (client waits, but guaranteed completion)
+				try {
+					await syncData(env, totalDays, offsetDays, resourceFilter);
+					await updateTableStats(env);
+					return withCors(new Response(`Backfill completed: ${totalDays} days synced.`, { status: 200 }), origin);
+				} catch (err) {
+					return withCors(
+						Response.json(
+							{
+								error: 'Backfill failed',
+								details: err instanceof Error ? err.message : String(err).slice(0, 500),
+							},
+							{ status: 500 },
+						),
+						origin,
+					);
+				}
+			}
 		}
-    }
 
 		if (url.pathname === '/api/daily_summaries') {
 			const start = url.searchParams.get('start');
@@ -355,9 +312,7 @@ export default {
 
 			const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 			try {
-				const stmt = env.oura_db.prepare(
-					`SELECT * FROM daily_summaries ${whereSql} ORDER BY day ASC`
-				);
+				const stmt = env.oura_db.prepare(`SELECT * FROM daily_summaries ${whereSql} ORDER BY day ASC`);
 				const out = args.length ? await stmt.bind(...args).all() : await stmt.all();
 				return withCors(
 					new Response(JSON.stringify(out.results), {
@@ -367,113 +322,94 @@ export default {
 							'Cache-Control': `private, max-age=${RESPONSE_CACHE_TTL}`,
 						},
 					}),
-					origin
+					origin,
 				);
 			} catch (err) {
-				return withCors(
-					Response.json(
-						{ error: 'D1 query failed', details: String(err).slice(0, 500) },
-						{ status: 500 }
-					),
-					origin
-				);
+				return withCors(Response.json({ error: 'D1 query failed', details: String(err).slice(0, 500) }, { status: 500 }), origin);
 			}
 		}
 
-	if (url.pathname === '/api/sql' && request.method === 'POST') {
-		const body = (await request.json().catch(() => null)) as
-			| { sql?: unknown; params?: unknown }
-			| null;
+		if (url.pathname === '/api/sql' && request.method === 'POST') {
+			const body = (await request.json().catch(() => null)) as { sql?: unknown; params?: unknown } | null;
 
-		const sql = typeof body?.sql === 'string' ? body.sql.trim() : '';
-		const params = Array.isArray(body?.params) ? body.params : [];
-		
-		// Validation: SQL length limit
-		if (sql.length > MAX_SQL_LENGTH) {
-			return withCors(
-				Response.json(
-					{ error: `SQL too large (max ${MAX_SQL_LENGTH} characters)` },
-					{ status: 400 }
-				),
-				origin
-			);
-		}
+			const sql = typeof body?.sql === 'string' ? body.sql.trim() : '';
+			const params = Array.isArray(body?.params) ? body.params : [];
 
-		// Validation: Read-only queries only
-		if (!isReadOnlySql(sql)) {
-			return withCors(new Response('Only read-only SQL is allowed', { status: 400 }), origin);
-		}
+			// Validation: SQL length limit
+			if (sql.length > MAX_SQL_LENGTH) {
+				return withCors(Response.json({ error: `SQL too large (max ${MAX_SQL_LENGTH} characters)` }, { status: 400 }), origin);
+			}
 
-		// Validation: Parameter count limit
-		if (params.length > 100) {
-			return withCors(
-				Response.json({ error: 'Too many parameters (max 100)' }, { status: 400 }),
-				origin
-			);
-		}
+			// Validation: Read-only queries only
+			if (!isReadOnlySql(sql)) {
+				return withCors(new Response('Only read-only SQL is allowed', { status: 400 }), origin);
+			}
 
-		try {
-			const result = await env.oura_db.prepare(sql).bind(...params).all();
-			
-			// Detect stats/metadata queries (COUNT(*) across all tables)
-			// These queries scan millions of rows but results change infrequently
-			const isStatsQuery = /COUNT\(\*\).*FROM\s+heart_rate_samples/i.test(sql) &&
-				/UNION\s+ALL/i.test(sql);
-			
-			// Use longer cache for stats queries (1 hour vs 5 minutes)
-			const cacheTTL = isStatsQuery ? 3600 : RESPONSE_CACHE_TTL;
-			
-			return withCors(
-				new Response(JSON.stringify({ results: result.results, meta: result.meta }), {
-					headers: {
-						'Content-Type': 'application/json',
-						'Cache-Control': `private, max-age=${cacheTTL}`,
-					},
-				}),
-				origin
-			);
-		} catch (err) {
-			return withCors(
-				Response.json(
-					{ error: 'D1 query failed', details: String(err).slice(0, 500) },
-					{ status: 500 }
-				),
-				origin
-			);
-		}
-	}
+			// Validation: Parameter count limit
+			if (params.length > 100) {
+				return withCors(Response.json({ error: 'Too many parameters (max 100)' }, { status: 400 }), origin);
+			}
 
-	if (url.pathname === '/api/sql') {
-		return withCors(new Response('Method Not Allowed', { status: 405 }), origin);
-	}
+			try {
+				const result = await env.oura_db
+					.prepare(sql)
+					.bind(...params)
+					.all();
 
-	// Dedicated endpoint for table statistics (fast, approximate counts)
-	if (url.pathname === '/api/stats') {
-		try {
-			// Use pre-computed stats table if available (most accurate)
-			const { results: cachedStats } = await env.oura_db
-				.prepare('SELECT resource, min_day, max_day, record_count, updated_at FROM table_stats ORDER BY resource')
-				.all();
-			
-			if (cachedStats && cachedStats.length > 0) {
+				// Detect stats/metadata queries (COUNT(*) across all tables)
+				// These queries scan millions of rows but results change infrequently
+				const isStatsQuery = /COUNT\(\*\).*FROM\s+heart_rate_samples/i.test(sql) && /UNION\s+ALL/i.test(sql);
+
+				// Use longer cache for stats queries (1 hour vs 5 minutes)
+				const cacheTTL = isStatsQuery ? 3600 : RESPONSE_CACHE_TTL;
+
 				return withCors(
-					new Response(JSON.stringify(cachedStats), {
+					new Response(JSON.stringify({ results: result.results, meta: result.meta }), {
 						headers: {
 							'Content-Type': 'application/json',
-							'Cache-Control': 'private, max-age=3600',
+							'Cache-Control': `private, max-age=${cacheTTL}`,
 						},
 					}),
-					origin
+					origin,
 				);
+			} catch (err) {
+				return withCors(Response.json({ error: 'D1 query failed', details: String(err).slice(0, 500) }, { status: 500 }), origin);
 			}
+		}
 
-			// Fallback: compute stats on-demand (slow but accurate)
-			// This will only run if table_stats is empty (first time)
-			console.warn('table_stats empty, computing on-demand (slow)', {
-				timestamp: new Date().toISOString(),
-			});
-			
-			const stats = await env.oura_db.prepare(`
+		if (url.pathname === '/api/sql') {
+			return withCors(new Response('Method Not Allowed', { status: 405 }), origin);
+		}
+
+		// Dedicated endpoint for table statistics (fast, approximate counts)
+		if (url.pathname === '/api/stats') {
+			try {
+				// Use pre-computed stats table if available (most accurate)
+				const { results: cachedStats } = await env.oura_db
+					.prepare('SELECT resource, min_day, max_day, record_count, updated_at FROM table_stats ORDER BY resource')
+					.all();
+
+				if (cachedStats && cachedStats.length > 0) {
+					return withCors(
+						new Response(JSON.stringify(cachedStats), {
+							headers: {
+								'Content-Type': 'application/json',
+								'Cache-Control': 'private, max-age=3600',
+							},
+						}),
+						origin,
+					);
+				}
+
+				// Fallback: compute stats on-demand (slow but accurate)
+				// This will only run if table_stats is empty (first time)
+				console.warn('table_stats empty, computing on-demand (slow)', {
+					timestamp: new Date().toISOString(),
+				});
+
+				const stats = await env.oura_db
+					.prepare(
+						`
 				SELECT 'daily_summaries' AS resource, MIN(day) AS min_day, MAX(day) AS max_day, COUNT(*) AS record_count FROM daily_summaries
 				UNION ALL
 				SELECT 'sleep_episodes', MIN(day), MAX(day), COUNT(*) FROM sleep_episodes
@@ -481,71 +417,55 @@ export default {
 				SELECT 'heart_rate_samples', MIN(substr(timestamp,1,10)), MAX(substr(timestamp,1,10)), COUNT(*) FROM heart_rate_samples
 				UNION ALL
 				SELECT 'activity_logs', MIN(substr(start_datetime,1,10)), MAX(substr(start_datetime,1,10)), COUNT(*) FROM activity_logs
-			`).all();
-			
-			return withCors(
-				new Response(JSON.stringify(stats.results), {
-					headers: {
-						'Content-Type': 'application/json',
-						'Cache-Control': 'private, max-age=60', // Short cache since it's a fallback
-					},
-				}),
-				origin
-			);
-		} catch (err) {
-			return withCors(
-				Response.json(
-					{ error: 'Failed to fetch table stats', details: String(err).slice(0, 500) },
-					{ status: 500 }
-				),
-				origin
-			);
-		}
-	}
+			`,
+					)
+					.all();
 
-	// Serve all data to Grafana (root endpoint only)
-	if (url.pathname === '/') {
-		try {
-			const { results } = await env.oura_db
-				.prepare('SELECT * FROM daily_summaries ORDER BY day ASC')
-				.all();
-			return withCors(
-				new Response(JSON.stringify(results), {
-					headers: {
-						'Content-Type': 'application/json',
-						// Use 'private' cache since endpoint requires authentication
-						'Cache-Control': `private, max-age=${RESPONSE_CACHE_TTL}`,
-					},
-				}),
-				origin
-			);
-		} catch (err) {
-			return withCors(
-				Response.json(
-					{ error: 'D1 query failed', details: String(err).slice(0, 500) },
-					{ status: 500 }
-				),
-				origin
-			);
+				return withCors(
+					new Response(JSON.stringify(stats.results), {
+						headers: {
+							'Content-Type': 'application/json',
+							'Cache-Control': 'private, max-age=60', // Short cache since it's a fallback
+						},
+					}),
+					origin,
+				);
+			} catch (err) {
+				return withCors(
+					Response.json({ error: 'Failed to fetch table stats', details: String(err).slice(0, 500) }, { status: 500 }),
+					origin,
+				);
+			}
 		}
-	}
 
-	// No matching endpoint
-	return withCors(new Response('Not Found', { status: 404 }), origin);
-  }
+		// Serve all data to Grafana (root endpoint only)
+		if (url.pathname === '/') {
+			try {
+				const { results } = await env.oura_db.prepare('SELECT * FROM daily_summaries ORDER BY day ASC').all();
+				return withCors(
+					new Response(JSON.stringify(results), {
+						headers: {
+							'Content-Type': 'application/json',
+							// Use 'private' cache since endpoint requires authentication
+							'Cache-Control': `private, max-age=${RESPONSE_CACHE_TTL}`,
+						},
+					}),
+					origin,
+				);
+			} catch (err) {
+				return withCors(Response.json({ error: 'D1 query failed', details: String(err).slice(0, 500) }, { status: 500 }), origin);
+			}
+		}
+
+		// No matching endpoint
+		return withCors(new Response('Not Found', { status: 404 }), origin);
+	},
 };
 
-async function syncData(
-	env: Env,
-	totalDays: number,
-	offsetDays = 0,
-	resourceFilter: Set<string> | null = null
-) {
+async function syncData(env: Env, totalDays: number, offsetDays = 0, resourceFilter: Set<string> | null = null) {
 	const syncStartTime = Date.now();
 	const resourcesAll = await loadOuraResourcesFromOpenApi(env);
-	const resources = resourceFilter
-		? resourcesAll.filter((r) => resourceFilter.has(r.resource))
-		: resourcesAll;
+	const resources = resourceFilter ? resourcesAll.filter((r) => resourceFilter.has(r.resource)) : resourcesAll;
 
 	// Process all resources in parallel for faster syncs
 	// Rate limit: 5000 req/5min (1000 req/min), we're using ~18 resources = well under limit
@@ -563,12 +483,8 @@ async function syncData(
 				// Process time windows sequentially per resource to avoid pagination issues
 				for (let i = 0; i < totalDays; i += chunkDays) {
 					const windowDays = Math.min(chunkDays, totalDays - i);
-					const start = new Date(Date.now() - (offsetDays + i + windowDays) * 86400000)
-						.toISOString()
-						.split('T')[0];
-					const end = new Date(Date.now() - (offsetDays + i) * 86400000)
-						.toISOString()
-						.split('T')[0];
+					const start = new Date(Date.now() - (offsetDays + i + windowDays) * 86400000).toISOString().split('T')[0];
+					const end = new Date(Date.now() - (offsetDays + i) * 86400000).toISOString().split('T')[0];
 					await ingestResource(env, r, { startDate: start, endDate: end });
 					requestCount++;
 				}
@@ -583,15 +499,13 @@ async function syncData(
 				});
 				return { resource: r.resource, success: false, error: err };
 			}
-		})
+		}),
 	);
 
 	// Log sync summary
 	const successful = results.filter((r) => r.status === 'fulfilled' && r.value.success).length;
 	const failed = results.filter((r) => r.status === 'rejected' || (r.status === 'fulfilled' && !r.value.success)).length;
-	const totalRequests = results
-		.filter((r) => r.status === 'fulfilled')
-		.reduce((sum, r) => sum + (r.value.requests || 0), 0);
+	const totalRequests = results.filter((r) => r.status === 'fulfilled').reduce((sum, r) => sum + (r.value.requests || 0), 0);
 	const duration = Date.now() - syncStartTime;
 
 	console.log('Sync completed', {
@@ -608,7 +522,7 @@ async function syncData(
 	const failedResources = results
 		.filter((r) => r.status === 'rejected' || (r.status === 'fulfilled' && !r.value.success))
 		.map((r) => (r.status === 'fulfilled' ? r.value.resource : 'unknown'));
-	
+
 	if (failedResources.length > 0) {
 		console.warn('Failed resources', {
 			resources: failedResources,
@@ -651,23 +565,25 @@ async function saveToD1(env: Env, endpoint: string, data: any[]) {
 				readiness_recovery_index=excluded.readiness_recovery_index,
 				readiness_resting_heart_rate=excluded.readiness_resting_heart_rate,
 				readiness_sleep_balance=excluded.readiness_sleep_balance,
-				updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`
+				updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
 		);
 		const stmts = [];
 		for (const d of data) {
 			const c = d?.contributors ?? {};
-			stmts.push(stmt.bind(
-				d.day,
-				toInt(d.score),
-				toInt(c.activity_balance),
-				toInt(c.body_temperature),
-				toInt(c.hrv_balance),
-				toInt(c.previous_day_activity),
-				toInt(c.previous_night),
-				toInt(c.recovery_index),
-				toInt(c.resting_heart_rate),
-				toInt(c.sleep_balance)
-			));
+			stmts.push(
+				stmt.bind(
+					d.day,
+					toInt(d.score),
+					toInt(c.activity_balance),
+					toInt(c.body_temperature),
+					toInt(c.hrv_balance),
+					toInt(c.previous_day_activity),
+					toInt(c.previous_night),
+					toInt(c.recovery_index),
+					toInt(c.resting_heart_rate),
+					toInt(c.sleep_balance),
+				),
+			);
 		}
 		if (stmts.length) await env.oura_db.batch(stmts);
 	}
@@ -686,22 +602,24 @@ async function saveToD1(env: Env, endpoint: string, data: any[]) {
 				sleep_restfulness=excluded.sleep_restfulness,
 				sleep_timing=excluded.sleep_timing,
 				sleep_total_sleep=excluded.sleep_total_sleep,
-				updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`
+				updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
 		);
 		const stmts = [];
 		for (const d of data) {
 			const c = d?.contributors ?? {};
-			stmts.push(stmt.bind(
-				d.day,
-				toInt(d.score),
-				toInt(c.deep_sleep),
-				toInt(c.efficiency),
-				toInt(c.latency),
-				toInt(c.rem_sleep),
-				toInt(c.restfulness),
-				toInt(c.timing),
-				toInt(c.total_sleep)
-			));
+			stmts.push(
+				stmt.bind(
+					d.day,
+					toInt(d.score),
+					toInt(c.deep_sleep),
+					toInt(c.efficiency),
+					toInt(c.latency),
+					toInt(c.rem_sleep),
+					toInt(c.restfulness),
+					toInt(c.timing),
+					toInt(c.total_sleep),
+				),
+			);
 		}
 		if (stmts.length) await env.oura_db.batch(stmts);
 	}
@@ -722,24 +640,26 @@ async function saveToD1(env: Env, endpoint: string, data: any[]) {
 				activity_stay_active=excluded.activity_stay_active,
 				activity_training_frequency=excluded.activity_training_frequency,
 				activity_training_volume=excluded.activity_training_volume,
-				updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`
+				updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
 		);
 		const stmts = [];
 		for (const d of data) {
 			const c = d?.contributors ?? {};
-			stmts.push(stmt.bind(
-				d.day,
-				toInt(d.score),
-				toInt(d.steps),
-				toInt(d.active_calories),
-				toInt(d.total_calories),
-				toInt(c.meet_daily_targets),
-				toInt(c.move_every_hour),
-				toInt(c.recovery_time),
-				toInt(c.stay_active),
-				toInt(c.training_frequency),
-				toInt(c.training_volume)
-			));
+			stmts.push(
+				stmt.bind(
+					d.day,
+					toInt(d.score),
+					toInt(d.steps),
+					toInt(d.active_calories),
+					toInt(d.total_calories),
+					toInt(c.meet_daily_targets),
+					toInt(c.move_every_hour),
+					toInt(c.recovery_time),
+					toInt(c.stay_active),
+					toInt(c.training_frequency),
+					toInt(c.training_volume),
+				),
+			);
 		}
 		if (stmts.length) await env.oura_db.batch(stmts);
 	}
@@ -751,7 +671,7 @@ async function saveToD1(env: Env, endpoint: string, data: any[]) {
 			VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 			ON CONFLICT(day) DO UPDATE SET
 				stress_index=excluded.stress_index,
-				updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`
+				updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
 		);
 		const stmts = [];
 		for (const d of data) {
@@ -769,7 +689,7 @@ async function saveToD1(env: Env, endpoint: string, data: any[]) {
 				resilience_level=excluded.resilience_level,
 				resilience_contributors_sleep=excluded.resilience_contributors_sleep,
 				resilience_contributors_stress=excluded.resilience_contributors_stress,
-				updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`
+				updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
 		);
 		const stmts = [];
 		for (const d of data) {
@@ -787,7 +707,7 @@ async function saveToD1(env: Env, endpoint: string, data: any[]) {
 			ON CONFLICT(day) DO UPDATE SET
 				spo2_percentage=excluded.spo2_percentage,
 				spo2_breathing_disturbance_index=excluded.spo2_breathing_disturbance_index,
-				updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`
+				updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
 		);
 		const stmts = [];
 		for (const d of data) {
@@ -803,7 +723,7 @@ async function saveToD1(env: Env, endpoint: string, data: any[]) {
 			VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 			ON CONFLICT(day) DO UPDATE SET
 				cv_age_offset=excluded.cv_age_offset,
-				updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`
+				updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
 		);
 		const stmts = [];
 		for (const d of data) {
@@ -819,7 +739,7 @@ async function saveToD1(env: Env, endpoint: string, data: any[]) {
 			VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 			ON CONFLICT(day) DO UPDATE SET
 				vo2_max=excluded.vo2_max,
-				updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`
+				updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
 		);
 		const stmts = [];
 		for (const d of data) {
@@ -846,26 +766,28 @@ async function saveToD1(env: Env, endpoint: string, data: any[]) {
 				deep_duration=excluded.deep_duration,
 				rem_duration=excluded.rem_duration,
 				light_duration=excluded.light_duration,
-				awake_duration=excluded.awake_duration`
+				awake_duration=excluded.awake_duration`,
 		);
 		const stmts = [];
 		for (const d of data) {
-			stmts.push(stmt.bind(
-				d.id,
-				d.day,
-				d.bedtime_start ?? null,
-				d.bedtime_end ?? null,
-				d.type ?? null,
-				toReal(d.average_heart_rate),
-				toReal(d.lowest_heart_rate),
-				toReal(d.average_hrv),
-				toReal(d.average_breath),
-				toReal(d.readiness?.temperature_deviation ?? d.temperature_deviation),
-				toInt(d.deep_sleep_duration),
-				toInt(d.rem_sleep_duration),
-				toInt(d.light_sleep_duration),
-				toInt(d.awake_time)
-			));
+			stmts.push(
+				stmt.bind(
+					d.id,
+					d.day,
+					d.bedtime_start ?? null,
+					d.bedtime_end ?? null,
+					d.type ?? null,
+					toReal(d.average_heart_rate),
+					toReal(d.lowest_heart_rate),
+					toReal(d.average_hrv),
+					toReal(d.average_breath),
+					toReal(d.readiness?.temperature_deviation ?? d.temperature_deviation),
+					toInt(d.deep_sleep_duration),
+					toInt(d.rem_sleep_duration),
+					toInt(d.light_sleep_duration),
+					toInt(d.awake_time),
+				),
+			);
 		}
 		if (stmts.length) await env.oura_db.batch(stmts);
 	}
@@ -874,21 +796,21 @@ async function saveToD1(env: Env, endpoint: string, data: any[]) {
 	if (endpoint === 'heartrate') {
 		const stmt = env.oura_db.prepare(
 			'INSERT INTO heart_rate_samples (timestamp, bpm, source) VALUES (?, ?, ?) ' +
-				'ON CONFLICT(timestamp) DO UPDATE SET bpm=excluded.bpm, source=excluded.source'
+				'ON CONFLICT(timestamp) DO UPDATE SET bpm=excluded.bpm, source=excluded.source',
 		);
-		
+
 		// Process in batches to reduce memory usage (heart rate can have 10k+ samples)
 		const BATCH_SIZE = 500;
 		for (let i = 0; i < data.length; i += BATCH_SIZE) {
 			const batch = data.slice(i, i + BATCH_SIZE);
 			const stmts = [];
-			
+
 			for (const d of batch) {
 				const timestamp = typeof d?.timestamp === 'string' ? d.timestamp : null;
 				if (!timestamp) continue;
 				stmts.push(stmt.bind(timestamp, toInt(d.bpm), d.source ?? null));
 			}
-			
+
 			if (stmts.length) {
 				await env.oura_db.batch(stmts);
 			}
@@ -908,20 +830,22 @@ async function saveToD1(env: Env, endpoint: string, data: any[]) {
 				intensity=excluded.intensity,
 				calories=excluded.calories,
 				distance=excluded.distance,
-				hr_avg=excluded.hr_avg`
+				hr_avg=excluded.hr_avg`,
 		);
 		const stmts = [];
 		for (const d of data) {
-			stmts.push(stmt.bind(
-				d.id,
-				d.start_datetime ?? null,
-				d.end_datetime ?? null,
-				d.activity ?? d.sport ?? null,
-				d.intensity ?? null,
-				toReal(d.calories),
-				toReal(d.distance),
-				toReal(d.average_heart_rate)
-			));
+			stmts.push(
+				stmt.bind(
+					d.id,
+					d.start_datetime ?? null,
+					d.end_datetime ?? null,
+					d.activity ?? d.sport ?? null,
+					d.intensity ?? null,
+					toReal(d.calories),
+					toReal(d.distance),
+					toReal(d.average_heart_rate),
+				),
+			);
 		}
 		if (stmts.length) await env.oura_db.batch(stmts);
 	}
@@ -936,18 +860,13 @@ async function saveToD1(env: Env, endpoint: string, data: any[]) {
 				end_datetime=excluded.end_datetime,
 				activity_label=excluded.activity_label,
 				hr_avg=excluded.hr_avg,
-				mood=excluded.mood`
+				mood=excluded.mood`,
 		);
 		const stmts = [];
 		for (const d of data) {
-			stmts.push(stmt.bind(
-				d.id,
-				d.start_datetime ?? null,
-				d.end_datetime ?? null,
-				d.type ?? null,
-				toReal(d.heart_rate?.average),
-				d.mood ?? null
-			));
+			stmts.push(
+				stmt.bind(d.id, d.start_datetime ?? null, d.end_datetime ?? null, d.type ?? null, toReal(d.heart_rate?.average), d.mood ?? null),
+			);
 		}
 		if (stmts.length) await env.oura_db.batch(stmts);
 	}
@@ -960,7 +879,7 @@ async function saveToD1(env: Env, endpoint: string, data: any[]) {
 			ON CONFLICT(id) DO UPDATE SET
 				day=excluded.day,
 				tag_type=excluded.tag_type,
-				comment=excluded.comment`
+				comment=excluded.comment`,
 		);
 		const stmts = [];
 		for (const d of data) {
@@ -988,11 +907,7 @@ function toReal(v: unknown): number | null {
 	return null;
 }
 
-async function ingestResource(
-	env: Env,
-	r: OuraResource,
-	window: { startDate: string; endDate: string } | null
-): Promise<void> {
+async function ingestResource(env: Env, r: OuraResource, window: { startDate: string; endDate: string } | null): Promise<void> {
 	let nextToken: string | null = null;
 	let page = 0;
 
@@ -1058,11 +973,7 @@ async function ingestResource(
 	}
 }
 
-function buildOuraUrlForResource(
-	r: OuraResource,
-	window: { startDate: string; endDate: string } | null,
-	nextToken: string | null
-): string {
+function buildOuraUrlForResource(r: OuraResource, window: { startDate: string; endDate: string } | null, nextToken: string | null): string {
 	const base = `https://api.ouraring.com${r.path}`;
 	const u = new URL(base);
 
@@ -1080,11 +991,7 @@ function buildOuraUrlForResource(
 	return u.toString();
 }
 
-async function fetchWithRetry(
-	input: RequestInfo | URL,
-	init: RequestInit,
-	maxRetries = 3
-): Promise<Response> {
+async function fetchWithRetry(input: RequestInfo | URL, init: RequestInit, maxRetries = 3): Promise<Response> {
 	let attempt = 0;
 	while (true) {
 		const res = await fetch(input, init);
@@ -1139,11 +1046,7 @@ async function loadOuraResourcesFromOpenApi(env: Env): Promise<OuraResource[]> {
 		if (!resource) continue;
 
 		const params = Array.isArray(getDef.parameters) ? getDef.parameters : [];
-		const paramNames = new Set(
-			params
-				.map((p: any) => (typeof p?.name === 'string' ? p.name : null))
-				.filter(Boolean)
-		);
+		const paramNames = new Set(params.map((p: any) => (typeof p?.name === 'string' ? p.name : null)).filter(Boolean));
 
 		let queryMode: OuraQueryMode = 'none';
 		if (paramNames.has('start_datetime') || paramNames.has('end_datetime')) {
@@ -1160,7 +1063,7 @@ async function loadOuraResourcesFromOpenApi(env: Env): Promise<OuraResource[]> {
 	}
 
 	out.sort((a, b) => a.resource.localeCompare(b.resource));
-	
+
 	// Cache in KV for 24 hours
 	try {
 		await env.OURA_CACHE.put('openapi_resources', JSON.stringify(out), {
@@ -1172,7 +1075,7 @@ async function loadOuraResourcesFromOpenApi(env: Env): Promise<OuraResource[]> {
 			timestamp: new Date().toISOString(),
 		});
 	}
-	
+
 	return out;
 }
 
@@ -1186,11 +1089,7 @@ function isReadOnlySql(sql: string): boolean {
 	return !/\b(insert|update|delete|drop|alter|create|replace|vacuum|pragma|attach|detach)\b/i.test(normalized);
 }
 
-async function exchangeAuthorizationCodeForToken(
-	env: Env,
-	code: string,
-	redirectUri: string
-): Promise<OuraTokenResponse> {
+async function exchangeAuthorizationCodeForToken(env: Env, code: string, redirectUri: string): Promise<OuraTokenResponse> {
 	if (!env.OURA_CLIENT_ID || !env.OURA_CLIENT_SECRET) {
 		throw new Error('Missing OURA_CLIENT_ID/OURA_CLIENT_SECRET');
 	}
@@ -1217,12 +1116,12 @@ async function exchangeAuthorizationCodeForToken(
 	if (!json || typeof json !== 'object') {
 		throw new Error('Token exchange response invalid');
 	}
-	
+
 	const tokenResponse = json as Partial<OuraTokenResponse>;
 	if (!tokenResponse.access_token || typeof tokenResponse.access_token !== 'string') {
 		throw new Error('Token exchange response missing access_token');
 	}
-	
+
 	return tokenResponse as OuraTokenResponse;
 }
 
@@ -1252,12 +1151,12 @@ async function refreshAccessToken(env: Env, refreshToken: string): Promise<OuraT
 	if (!json || typeof json !== 'object') {
 		throw new Error('Token refresh response invalid');
 	}
-	
+
 	const tokenResponse = json as Partial<OuraTokenResponse>;
 	if (!tokenResponse.access_token || typeof tokenResponse.access_token !== 'string') {
 		throw new Error('Token refresh response missing access_token');
 	}
-	
+
 	return tokenResponse as OuraTokenResponse;
 }
 
@@ -1270,16 +1169,9 @@ async function upsertOauthToken(env: Env, userId: string, token: OuraTokenRespon
 	await env.oura_db
 		.prepare(
 			'INSERT INTO oura_oauth_tokens (user_id, access_token, refresh_token, expires_at, scope, token_type) VALUES (?, ?, ?, ?, ?, ?) ' +
-				'ON CONFLICT(user_id) DO UPDATE SET access_token=excluded.access_token, refresh_token=COALESCE(excluded.refresh_token, oura_oauth_tokens.refresh_token), expires_at=excluded.expires_at, scope=excluded.scope, token_type=excluded.token_type, updated_at=(strftime(\'%Y-%m-%dT%H:%M:%fZ\',\'now\'))'
+				"ON CONFLICT(user_id) DO UPDATE SET access_token=excluded.access_token, refresh_token=COALESCE(excluded.refresh_token, oura_oauth_tokens.refresh_token), expires_at=excluded.expires_at, scope=excluded.scope, token_type=excluded.token_type, updated_at=(strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
 		)
-		.bind(
-			userId,
-			token.access_token,
-			token.refresh_token ?? null,
-			expiresAt,
-			token.scope ?? null,
-			token.token_type ?? null
-		)
+		.bind(userId, token.access_token, token.refresh_token ?? null, expiresAt, token.scope ?? null, token.token_type ?? null)
 		.run();
 }
 
@@ -1308,10 +1200,7 @@ async function getOuraAccessToken(env: Env): Promise<string> {
 	const accessToken = row.access_token;
 	const refreshToken = row.refresh_token;
 	const expiresAt = row.expires_at;
-	const hasValidAccess =
-		accessToken && expiresAt !== null && Number.isFinite(expiresAt)
-			? expiresAt > Date.now() + 60_000
-			: !!accessToken;
+	const hasValidAccess = accessToken && expiresAt !== null && Number.isFinite(expiresAt) ? expiresAt > Date.now() + 60_000 : !!accessToken;
 
 	if (hasValidAccess && accessToken) {
 		// Cache the valid token
@@ -1401,11 +1290,9 @@ async function updateTableStats(env: Env): Promise<void> {
 						min_day=excluded.min_day,
 						max_day=excluded.max_day,
 						record_count=excluded.record_count,
-						updated_at=excluded.updated_at`
+						updated_at=excluded.updated_at`,
 				);
-				updateStatements.push(
-					stmt.bind(result.resource, result.min_day, result.max_day, result.record_count)
-				);
+				updateStatements.push(stmt.bind(result.resource, result.min_day, result.max_day, result.record_count));
 			}
 		}
 
@@ -1427,17 +1314,17 @@ async function updateTableStats(env: Env): Promise<void> {
 
 function withCors(response: Response, origin: string | null): Response {
 	const headers = new Headers(response.headers);
-	
+
 	// Whitelist allowed origins
 	const allowedOrigins = [
 		'https://oura.keith20.dev',
 		'http://localhost:3000',
 		'http://localhost:8787', // Wrangler dev server
 	];
-	
+
 	// Validate origin and use first allowed origin as fallback
 	const allowOrigin = origin && allowedOrigins.includes(origin) ? origin : allowedOrigins[0];
-	
+
 	headers.set('Access-Control-Allow-Origin', allowOrigin);
 	headers.set('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
 	headers.set('Access-Control-Allow-Headers', 'Authorization,Content-Type');
@@ -1448,4 +1335,3 @@ function withCors(response: Response, origin: string | null): Response {
 		headers,
 	});
 }
-

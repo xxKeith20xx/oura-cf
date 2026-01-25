@@ -5,6 +5,7 @@
 Testing is writing code that automatically verifies your application works correctly.
 
 ### Why Test?
+
 - ✅ **Catch bugs early** - Find issues before users do
 - ✅ **Confidence** - Refactor code without fear
 - ✅ **Documentation** - Tests show how code should work
@@ -12,42 +13,45 @@ Testing is writing code that automatically verifies your application works corre
 
 ## Your Testing Stack
 
-| Package | Version | Purpose |
-|---------|---------|---------|
-| **Vitest** | 3.2.4 | Fast, modern test framework (like Jest) |
-| **@cloudflare/vitest-pool-workers** | 0.12.6 | Test Workers with D1, KV, etc. |
-| **TypeScript** | 5.9.3 | Type-safe tests |
+| Package                             | Version | Purpose                                 |
+| ----------------------------------- | ------- | --------------------------------------- |
+| **Vitest**                          | 3.2.4   | Fast, modern test framework (like Jest) |
+| **@cloudflare/vitest-pool-workers** | 0.12.6  | Test Workers with D1, KV, etc.          |
+| **TypeScript**                      | 5.9.3   | Type-safe tests                         |
 
 ## Test Types
 
 ### 1. Unit Tests
+
 Test individual functions in isolation.
 
 ```typescript
 // Example: Test a pure function
 function add(a: number, b: number) {
-  return a + b;
+	return a + b;
 }
 
 // Test
 it('adds two numbers', () => {
-  expect(add(2, 3)).toBe(5);
+	expect(add(2, 3)).toBe(5);
 });
 ```
 
 ### 2. Integration Tests
+
 Test how multiple parts work together.
 
 ```typescript
 // Example: Test an API endpoint
 it('returns user data from database', async () => {
-  const response = await fetch('/api/user/123');
-  const data = await response.json();
-  expect(data.name).toBe('John');
+	const response = await fetch('/api/user/123');
+	const data = await response.json();
+	expect(data.name).toBe('John');
 });
 ```
 
 ### 3. End-to-End (E2E) Tests
+
 Test the entire application flow (we won't cover these now).
 
 ## Your Test Structure
@@ -61,11 +65,11 @@ test/
 
 ### Test File Naming Conventions
 
-| Pattern | Example | When to Use |
-|---------|---------|-------------|
-| `*.test.ts` | `api.test.ts` | Jest/Vitest standard |
-| `*.spec.ts` | `api.spec.ts` | BDD style (your current style) |
-| `__tests__/*.ts` | `__tests__/api.ts` | Jest convention |
+| Pattern          | Example            | When to Use                    |
+| ---------------- | ------------------ | ------------------------------ |
+| `*.test.ts`      | `api.test.ts`      | Jest/Vitest standard           |
+| `*.spec.ts`      | `api.spec.ts`      | BDD style (your current style) |
+| `__tests__/*.ts` | `__tests__/api.ts` | Jest convention                |
 
 **You're using**: `*.spec.ts` (perfectly fine!)
 
@@ -77,16 +81,16 @@ test/
 import { describe, it, expect } from 'vitest';
 
 describe('Feature Name', () => {
-  it('does something specific', () => {
-    // Arrange: Set up test data
-    const input = 'hello';
-    
-    // Act: Run the code
-    const result = input.toUpperCase();
-    
-    // Assert: Check the result
-    expect(result).toBe('HELLO');
-  });
+	it('does something specific', () => {
+		// Arrange: Set up test data
+		const input = 'hello';
+
+		// Act: Run the code
+		const result = input.toUpperCase();
+
+		// Assert: Check the result
+		expect(result).toBe('HELLO');
+	});
 });
 ```
 
@@ -94,24 +98,24 @@ describe('Feature Name', () => {
 
 ```typescript
 // Equality
-expect(value).toBe(5);                    // Exact match (===)
-expect(value).toEqual({ a: 1 });          // Deep equality
-expect(value).toMatchObject({ a: 1 });    // Partial match
+expect(value).toBe(5); // Exact match (===)
+expect(value).toEqual({ a: 1 }); // Deep equality
+expect(value).toMatchObject({ a: 1 }); // Partial match
 
 // Truthiness
-expect(value).toBeTruthy();               // Truthy value
-expect(value).toBeFalsy();                // Falsy value
-expect(value).toBeNull();                 // Exactly null
-expect(value).toBeUndefined();            // Exactly undefined
+expect(value).toBeTruthy(); // Truthy value
+expect(value).toBeFalsy(); // Falsy value
+expect(value).toBeNull(); // Exactly null
+expect(value).toBeUndefined(); // Exactly undefined
 
 // Numbers
 expect(value).toBeGreaterThan(3);
 expect(value).toBeLessThan(5);
-expect(value).toBeCloseTo(3.14, 2);       // Floating point
+expect(value).toBeCloseTo(3.14, 2); // Floating point
 
 // Strings
 expect(string).toContain('hello');
-expect(string).toMatch(/hello/i);         // Regex
+expect(string).toMatch(/hello/i); // Regex
 
 // Arrays
 expect(array).toContain('item');
@@ -131,20 +135,20 @@ import { env, createExecutionContext } from 'cloudflare:test';
 import worker from '../src/index';
 
 it('tests endpoint', async () => {
-  // Create a request
-  const request = new Request('http://example.com/api/data');
-  
-  // Create execution context
-  const ctx = createExecutionContext();
-  
-  // Call your worker
-  const response = await worker.fetch(request, env, ctx);
-  
-  // Wait for background tasks
-  await waitOnExecutionContext(ctx);
-  
-  // Assert
-  expect(response.status).toBe(200);
+	// Create a request
+	const request = new Request('http://example.com/api/data');
+
+	// Create execution context
+	const ctx = createExecutionContext();
+
+	// Call your worker
+	const response = await worker.fetch(request, env, ctx);
+
+	// Wait for background tasks
+	await waitOnExecutionContext(ctx);
+
+	// Assert
+	expect(response.status).toBe(200);
 });
 ```
 
@@ -154,19 +158,21 @@ it('tests endpoint', async () => {
 import { SELF } from 'cloudflare:test';
 
 it('tests endpoint', async () => {
-  // Call the worker like a real request
-  const response = await SELF.fetch('https://example.com/api/data');
-  
-  expect(response.status).toBe(200);
+	// Call the worker like a real request
+	const response = await SELF.fetch('https://example.com/api/data');
+
+	expect(response.status).toBe(200);
 });
 ```
 
 **Use Integration Style for:**
+
 - Testing full request/response flow
 - Testing with real bindings (D1, KV)
 - Quick endpoint tests
 
 **Use Unit Style for:**
+
 - Testing with custom contexts
 - Mocking dependencies
 - Testing background tasks (`ctx.waitUntil`)
@@ -199,14 +205,14 @@ npm test -- --run
 
 ```typescript
 it('calculates total price', () => {
-  // Arrange: Set up test data
-  const items = [{ price: 10 }, { price: 20 }];
-  
-  // Act: Execute the code
-  const total = calculateTotal(items);
-  
-  // Assert: Verify the result
-  expect(total).toBe(30);
+	// Arrange: Set up test data
+	const items = [{ price: 10 }, { price: 20 }];
+
+	// Act: Execute the code
+	const total = calculateTotal(items);
+
+	// Assert: Verify the result
+	expect(total).toBe(30);
 });
 ```
 
@@ -225,18 +231,18 @@ it('returns 404 when user not found', () => { ... });
 ```typescript
 // ❌ Bad: Testing multiple things
 it('user API works', () => {
-  expect(getUser()).toBeDefined();
-  expect(createUser()).toBe(true);
-  expect(deleteUser()).toBe(true);
+	expect(getUser()).toBeDefined();
+	expect(createUser()).toBe(true);
+	expect(deleteUser()).toBe(true);
 });
 
 // ✅ Good: Separate tests
 it('gets existing user', () => {
-  expect(getUser(1)).toBeDefined();
+	expect(getUser(1)).toBeDefined();
 });
 
 it('creates new user', () => {
-  expect(createUser({ name: 'John' })).toBe(true);
+	expect(createUser({ name: 'John' })).toBe(true);
 });
 ```
 
@@ -244,21 +250,21 @@ it('creates new user', () => {
 
 ```typescript
 describe('User API', () => {
-  let userId: number;
-  
-  beforeEach(async () => {
-    // Runs before each test
-    userId = await createTestUser();
-  });
-  
-  afterEach(async () => {
-    // Runs after each test
-    await deleteTestUser(userId);
-  });
-  
-  it('gets user by id', () => {
-    expect(getUser(userId)).toBeDefined();
-  });
+	let userId: number;
+
+	beforeEach(async () => {
+		// Runs before each test
+		userId = await createTestUser();
+	});
+
+	afterEach(async () => {
+		// Runs after each test
+		await deleteTestUser(userId);
+	});
+
+	it('gets user by id', () => {
+		expect(getUser(userId)).toBeDefined();
+	});
 });
 ```
 
@@ -269,14 +275,14 @@ describe('User API', () => {
 ```typescript
 // ❌ Bad: Promise not awaited
 it('fetches data', () => {
-  const result = fetchData(); // Returns Promise!
-  expect(result).toBe('data'); // Will fail
+	const result = fetchData(); // Returns Promise!
+	expect(result).toBe('data'); // Will fail
 });
 
 // ✅ Good
 it('fetches data', async () => {
-  const result = await fetchData();
-  expect(result).toBe('data');
+	const result = await fetchData();
+	expect(result).toBe('data');
 });
 ```
 
@@ -287,22 +293,22 @@ it('fetches data', async () => {
 let userId;
 
 it('creates user', async () => {
-  userId = await createUser();
+	userId = await createUser();
 });
 
 it('gets user', async () => {
-  expect(getUser(userId)).toBeDefined(); // Fails if test 1 skipped
+	expect(getUser(userId)).toBeDefined(); // Fails if test 1 skipped
 });
 
 // ✅ Good: Independent tests
 it('creates user', async () => {
-  const userId = await createUser();
-  expect(userId).toBeDefined();
+	const userId = await createUser();
+	expect(userId).toBeDefined();
 });
 
 it('gets user', async () => {
-  const userId = await createUser(); // Create own data
-  expect(getUser(userId)).toBeDefined();
+	const userId = await createUser(); // Create own data
+	expect(getUser(userId)).toBeDefined();
 });
 ```
 
@@ -311,19 +317,19 @@ it('gets user', async () => {
 ```typescript
 // ❌ Bad: Leaves test data in database
 it('creates user', async () => {
-  await createUser({ name: 'Test' });
-  // Database now has test user forever
+	await createUser({ name: 'Test' });
+	// Database now has test user forever
 });
 
 // ✅ Good: Clean up
 it('creates user', async () => {
-  const userId = await createUser({ name: 'Test' });
-  
-  try {
-    expect(userId).toBeDefined();
-  } finally {
-    await deleteUser(userId); // Always clean up
-  }
+	const userId = await createUser({ name: 'Test' });
+
+	try {
+		expect(userId).toBeDefined();
+	} finally {
+		await deleteUser(userId); // Always clean up
+	}
 });
 ```
 

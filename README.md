@@ -60,15 +60,15 @@ A Cloudflare Worker that syncs Oura Ring health data to a D1 database and serves
 
 ### Technology Stack
 
-| Component                | Technology              | Purpose                              |
-|--------------------------|-------------------------|--------------------------------------|
-| **Runtime**              | Cloudflare Workers      | Edge computing platform              |
-| **Database**             | Cloudflare D1 (SQLite)  | Structured data storage              |
-| **Cache**                | Cloudflare KV           | OpenAPI spec caching (24hr TTL)      |
-| **Authentication**       | Oura OAuth2             | Secure API access                    |
-| **Visualization**        | Grafana Cloud           | Dashboards and analytics             |
-| **Language**             | TypeScript 5.9          | Type-safe development                |
-| **Deployment**           | Wrangler 4.60           | CLI deployment tool                  |
+| Component          | Technology             | Purpose                         |
+| ------------------ | ---------------------- | ------------------------------- |
+| **Runtime**        | Cloudflare Workers     | Edge computing platform         |
+| **Database**       | Cloudflare D1 (SQLite) | Structured data storage         |
+| **Cache**          | Cloudflare KV          | OpenAPI spec caching (24hr TTL) |
+| **Authentication** | Oura OAuth2            | Secure API access               |
+| **Visualization**  | Grafana Cloud          | Dashboards and analytics        |
+| **Language**       | TypeScript 5.9         | Type-safe development           |
+| **Deployment**     | Wrangler 4.60          | CLI deployment tool             |
 
 ## 🚀 Quick Start
 
@@ -126,27 +126,32 @@ curl https://your-worker.workers.dev/backfill?days=730 \
 ### Database Schema
 
 **daily_summaries** - Aggregated daily metrics
+
 - Readiness Score (activity balance, HRV, temperature, etc.)
 - Sleep Score (efficiency, latency, deep/REM/light sleep)
 - Activity Score (steps, calories, training volume)
 - Health Metrics (stress, resilience, SpO2, VO2 max, cardiovascular age)
 
 **sleep_episodes** - Detailed sleep sessions
+
 - Sleep stages (deep, REM, light, awake durations)
 - Heart rate (average, lowest)
 - HRV, breathing rate, temperature deviation
 - Sleep type (long sleep, nap, rest)
 
 **heart_rate_samples** - 5-minute resolution HR data
+
 - Timestamp, BPM, source (ring, workout, etc.)
 - High-resolution data for detailed analysis
 
 **activity_logs** - Workouts and sessions
+
 - Exercise type, duration, intensity
 - Calories burned, distance, average heart rate
 - Meditation and breathing sessions
 
 **table_stats** - Pre-computed statistics (cache)
+
 - Row counts, date ranges, last update time
 - Reduces database load for dashboard queries
 
@@ -165,22 +170,22 @@ OpenAPI Spec      Upsert Logic
 
 ### Public Endpoints (No Auth)
 
-| Endpoint              | Method | Description                          | Rate Limit       |
-|-----------------------|--------|--------------------------------------|------------------|
-| `/health`             | GET    | Health check with request details    | 1 req/60s per IP |
-| `/favicon.ico`        | GET    | Ring emoji favicon                   | Cached 1 year    |
-| `/oauth/callback`     | GET    | OAuth2 callback handler              | 1 req/60s per IP |
+| Endpoint          | Method | Description                       | Rate Limit       |
+| ----------------- | ------ | --------------------------------- | ---------------- |
+| `/health`         | GET    | Health check with request details | 1 req/60s per IP |
+| `/favicon.ico`    | GET    | Ring emoji favicon                | Cached 1 year    |
+| `/oauth/callback` | GET    | OAuth2 callback handler           | 1 req/60s per IP |
 
 ### Authenticated Endpoints (Require Bearer Token)
 
-| Endpoint                 | Method | Description                          | Cache TTL        |
-|--------------------------|--------|--------------------------------------|------------------|
-| `/oauth/start`           | GET    | Initiate Oura OAuth flow             | N/A              |
-| `/backfill`              | GET    | Sync historical data                 | N/A              |
-| `/api/daily_summaries`   | GET    | Query daily summaries table          | 5 minutes        |
-| `/api/stats`             | GET    | Pre-computed table statistics        | 1 hour           |
-| `/api/sql`               | POST   | Execute read-only SQL queries        | 5 minutes        |
-| `/`                      | GET    | All daily summaries (sorted by day)  | 5 minutes        |
+| Endpoint               | Method | Description                         | Cache TTL |
+| ---------------------- | ------ | ----------------------------------- | --------- |
+| `/oauth/start`         | GET    | Initiate Oura OAuth flow            | N/A       |
+| `/backfill`            | GET    | Sync historical data                | N/A       |
+| `/api/daily_summaries` | GET    | Query daily summaries table         | 5 minutes |
+| `/api/stats`           | GET    | Pre-computed table statistics       | 1 hour    |
+| `/api/sql`             | POST   | Execute read-only SQL queries       | 5 minutes |
+| `/`                    | GET    | All daily summaries (sorted by day) | 5 minutes |
 
 ### Example: Backfill Query
 
@@ -243,12 +248,12 @@ npx wrangler deploy
 
 ### Environment Variables (Secrets)
 
-| Secret                 | Required | Description                                    |
-|------------------------|----------|------------------------------------------------|
-| `GRAFANA_SECRET`       | Yes      | Bearer token for API authentication            |
-| `OURA_CLIENT_ID`       | Yes      | OAuth2 client ID from Oura developer portal    |
-| `OURA_CLIENT_SECRET`   | Yes      | OAuth2 client secret from Oura developer portal|
-| `OURA_PAT`             | No       | Personal access token (alternative to OAuth)   |
+| Secret               | Required | Description                                     |
+| -------------------- | -------- | ----------------------------------------------- |
+| `GRAFANA_SECRET`     | Yes      | Bearer token for API authentication             |
+| `OURA_CLIENT_ID`     | Yes      | OAuth2 client ID from Oura developer portal     |
+| `OURA_CLIENT_SECRET` | Yes      | OAuth2 client secret from Oura developer portal |
+| `OURA_PAT`           | No       | Personal access token (alternative to OAuth)    |
 
 ### Wrangler Configuration
 
@@ -256,22 +261,22 @@ Key settings in `wrangler.jsonc`:
 
 ```jsonc
 {
-  "compatibility_date": "2026-01-20",
-  "triggers": {
-    "crons": ["0 1,12,18 * * *"]  // Sync 3x daily
-  },
-  "d1_databases": [
-    {
-      "binding": "oura_db",
-      "database_id": "YOUR_D1_DATABASE_ID"
-    }
-  ],
-  "kv_namespaces": [
-    {
-      "binding": "OURA_CACHE",
-      "id": "YOUR_KV_NAMESPACE_ID"
-    }
-  ]
+	"compatibility_date": "2026-01-20",
+	"triggers": {
+		"crons": ["0 1,12,18 * * *"], // Sync 3x daily
+	},
+	"d1_databases": [
+		{
+			"binding": "oura_db",
+			"database_id": "YOUR_D1_DATABASE_ID",
+		},
+	],
+	"kv_namespaces": [
+		{
+			"binding": "OURA_CACHE",
+			"id": "YOUR_KV_NAMESPACE_ID",
+		},
+	],
 }
 ```
 
@@ -285,6 +290,7 @@ Key settings in `wrangler.jsonc`:
 ### Configuration Steps
 
 1. **Install Infinity Plugin**
+
    ```
    Grafana → Plugins → Search "Infinity" → Install
    ```
@@ -313,19 +319,20 @@ Key settings in `wrangler.jsonc`:
 ### Example Queries
 
 **Readiness Trend (7-day rolling average)**:
+
 ```sql
 WITH d AS (
-  SELECT day, readiness_score AS score 
-  FROM daily_summaries 
+  SELECT day, readiness_score AS score
+  FROM daily_summaries
   WHERE readiness_score IS NOT NULL AND day >= date('now', '-2 years')
-) 
-SELECT 
-  day||'T00:00:00Z' AS time, 
-  score, 
+)
+SELECT
+  day||'T00:00:00Z' AS time,
+  score,
   AVG(score) OVER (
     ORDER BY day ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
-  ) AS score_7d 
-FROM d 
+  ) AS score_7d
+FROM d
 ORDER BY day
 ```
 
@@ -369,14 +376,14 @@ oura-cf/
 
 ### Key Functions
 
-| Function                        | Purpose                                      | Lines        |
-|---------------------------------|----------------------------------------------|--------------|
-| `syncData()`                    | Parallel resource fetching orchestrator      | 80 lines     |
-| `ingestResource()`              | Fetch data from Oura API with pagination     | 70 lines     |
-| `saveToD1()`                    | Transform & save data to D1 (12 endpoints)   | 350 lines    |
-| `loadOuraResourcesFromOpenApi()`| Dynamic endpoint discovery from OpenAPI spec | 80 lines     |
-| `getOuraAccessToken()`          | OAuth token management with auto-refresh     | 60 lines     |
-| `updateTableStats()`            | Pre-compute table statistics                 | 60 lines     |
+| Function                         | Purpose                                      | Lines     |
+| -------------------------------- | -------------------------------------------- | --------- |
+| `syncData()`                     | Parallel resource fetching orchestrator      | 80 lines  |
+| `ingestResource()`               | Fetch data from Oura API with pagination     | 70 lines  |
+| `saveToD1()`                     | Transform & save data to D1 (12 endpoints)   | 350 lines |
+| `loadOuraResourcesFromOpenApi()` | Dynamic endpoint discovery from OpenAPI spec | 80 lines  |
+| `getOuraAccessToken()`           | OAuth token management with auto-refresh     | 60 lines  |
+| `updateTableStats()`             | Pre-compute table statistics                 | 60 lines  |
 
 ### Adding New Oura Endpoints
 
@@ -391,6 +398,7 @@ The system automatically detects new Oura API endpoints via OpenAPI spec. To add
 Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 Quick summary:
+
 - Use conventional commit messages (`feat:`, `fix:`, `docs:`)
 - Update CHANGELOG.md for notable changes
 - Test locally with `wrangler dev` before submitting

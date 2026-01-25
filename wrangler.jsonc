@@ -4,33 +4,29 @@
 	"preview_urls": false,
 	"main": "src/index.ts",
 	"compatibility_date": "2026-01-20",
-	"compatibility_flags": [
-		"nodejs_compat"
-	],
+	"compatibility_flags": ["nodejs_compat"],
 	"workers_dev": false,
 	"triggers": {
-		"crons": [
-			"0 1,12,18 * * *"
-		]
+		"crons": ["0 1,12,18 * * *"],
 	},
 	"observability": {
 		"enabled": true,
-		"head_sampling_rate": 1
+		"head_sampling_rate": 1,
 	},
 	"kv_namespaces": [
 		{
 			"binding": "OURA_CACHE",
 			"id": "16e97e2cc4bf430baad10361bbf0ba27",
-			"remote": true
-		}
+			"remote": true,
+		},
 	],
 	"d1_databases": [
 		{
 			"binding": "oura_db",
 			"database_name": "oura-db",
 			"database_id": "782c3449-0a87-4ba8-a93a-bbb151749743",
-			"migrations_dir": "migrations"
-		}
+			"migrations_dir": "migrations",
+		},
 	],
 	"ratelimits": [
 		{
@@ -38,22 +34,22 @@
 			"namespace_id": "1001",
 			"simple": {
 				"limit": 1,
-				"period": 60
-			}
+				"period": 60,
+			},
 		},
 		{
 			"name": "AUTH_RATE_LIMITER",
 			"namespace_id": "1002",
 			"simple": {
 				"limit": 60,
-				"period": 60
-			}
-		}
+				"period": 60,
+			},
+		},
 	],
 	"routes": [
 		{
 			"pattern": "oura.keith20.dev",
-			"custom_domain": true
-		}
-	]
+			"custom_domain": true,
+		},
+	],
 }

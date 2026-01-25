@@ -8,20 +8,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.0.1] - 2026-01-26
 
 ### Security
+
 - Removed `account_id` from `wrangler.jsonc` (now uses `CLOUDFLARE_ACCOUNT_ID` env var)
 - Redacted account_id from git history to prevent exposure
 - Added separate rate limiter for authenticated endpoints (60 req/min)
 
 ### Fixed
+
 - Grafana dashboard 429 errors caused by overly restrictive rate limiting
 - Health endpoint now properly includes request metadata for debugging
 
 ### Added
+
 - `.dev.vars.example` file to document environment variables
 - Documentation for `CLOUDFLARE_ACCOUNT_ID` environment variable in README
 - Separate `AUTH_RATE_LIMITER` binding for authenticated endpoints
 
 ### Changed
+
 - Rate limiting now uses two separate limiters:
   - `RATE_LIMITER`: 1 req/60s for public endpoints (`/health`, `/oauth/callback`)
   - `AUTH_RATE_LIMITER`: 60 req/min for authenticated endpoints
@@ -29,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.0.0] - 2026-01-26
 
 ### Added
+
 - MIT License for open source distribution
 - Rate limiting for public endpoints (`/health`, `/oauth/callback`)
 - Rate limiting for authenticated endpoints (60 requests per minute)
@@ -40,6 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CONTRIBUTING.md with contribution guidelines
 
 ### Changed
+
 - **PERFORMANCE**: Implemented parallel resource fetching for 3-5x faster data syncs
   - 3-day sync: 9-12s → 2-3s
   - 730-day backfill: 60-90s → 15-25s
@@ -53,12 +59,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - @cloudflare/vitest-pool-workers: 0.8.19 → 0.12.6
 
 ### Fixed
+
 - Removed invalid `custom_domains` field from `wrangler.jsonc` (eliminated CLI warnings)
 - Fixed `waitUntil()` timeout errors during large backfills
   - Small syncs (≤1 day): Use background processing
   - Large syncs (>1 day): Synchronous execution for guaranteed completion
 
 ### Security
+
 - Rate limiting added to prevent abuse of public endpoints
 - OAuth callback now rate-limited (1 req/60s per IP)
 - Health check endpoint rate-limited (1 req/60s per IP)
@@ -67,6 +75,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.0.0] - 2025-12-26 to 2026-01-25
 
 ### Added
+
 - Initial Cloudflare Worker setup for Oura Ring data synchronization
 - D1 database integration with migration system
   - `daily_summaries` table (readiness, sleep, activity scores)
@@ -103,6 +112,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Health check endpoint (`/health`) with request diagnostics
 
 ### Performance Optimizations
+
 - Pre-computed table statistics (reduces 1M reads/day to 12 reads/day)
 - Cache-Control headers for edge caching
 - Optimized D1 queries with proper indexing
@@ -110,6 +120,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Heart rate sample batching (500 samples per D1 batch operation)
 
 ### Database
+
 - Created D1 database schema with 7 tables
 - Applied 4 migrations:
   - `0001_init.sql` - Core tables (daily_summaries, sleep_episodes, etc.)
@@ -119,6 +130,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Implemented upsert logic for merging data from multiple Oura endpoints
 
 ### Security
+
 - Bearer token authentication for all API endpoints
 - Read-only SQL validation (prevents data modification)
 - OAuth state validation with 15-minute expiration
@@ -126,6 +138,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Sensitive table filtering (OAuth tokens excluded from `/api/sql`)
 
 ### Documentation
+
 - Comprehensive README with architecture overview
 - Setup and deployment instructions
 - Backfill script examples
