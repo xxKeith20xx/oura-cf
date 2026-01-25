@@ -1,6 +1,7 @@
 export interface Env {
 	oura_db: D1Database;
 	RATE_LIMITER: RateLimit;
+	AUTH_RATE_LIMITER: RateLimit;
 	OURA_CACHE: KVNamespace;
 	GRAFANA_SECRET: string;
 	OURA_CLIENT_ID?: string;
@@ -216,7 +217,7 @@ export default {
 		// Allows 60 requests per minute per IP (1 per second sustained)
 		const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
 		const authRateLimitKey = `auth:${clientIP}`;
-		const { success: authRateLimit } = await env.RATE_LIMITER.limit({ key: authRateLimitKey });
+		const { success: authRateLimit } = await env.AUTH_RATE_LIMITER.limit({ key: authRateLimitKey });
 		
 		if (!authRateLimit) {
 			return withCors(
