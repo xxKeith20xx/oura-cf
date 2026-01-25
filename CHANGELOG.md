@@ -5,17 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.0.1] - 2026-01-26
 
 ### Security
-- **BREAKING**: Removed `account_id` from `wrangler.jsonc` (use `CLOUDFLARE_ACCOUNT_ID` env var)
-- Redacted account_id from git history (force push required)
+- Removed `account_id` from `wrangler.jsonc` (now uses `CLOUDFLARE_ACCOUNT_ID` env var)
+- Redacted account_id from git history to prevent exposure
 - Added separate rate limiter for authenticated endpoints (60 req/min)
-- Fixed Grafana dashboard 429 errors caused by shared rate limiter
+
+### Fixed
+- Grafana dashboard 429 errors caused by overly restrictive rate limiting
+- Health endpoint now properly includes request metadata for debugging
 
 ### Added
 - `.dev.vars.example` file to document environment variables
 - Documentation for `CLOUDFLARE_ACCOUNT_ID` environment variable in README
+- Separate `AUTH_RATE_LIMITER` binding for authenticated endpoints
 
 ### Changed
 - Rate limiting now uses two separate limiters:
@@ -128,6 +132,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Security review documentation
 - Performance optimization guides
 
-[Unreleased]: https://github.com/xxKeith20xx/oura-cf/compare/v1.0.0...HEAD
+[1.0.1]: https://github.com/xxKeith20xx/oura-cf/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/xxKeith20xx/oura-cf/compare/v0.0.0...v1.0.0
 [0.0.0]: https://github.com/xxKeith20xx/oura-cf/releases/tag/v0.0.0
