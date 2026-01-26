@@ -403,6 +403,56 @@ Quick summary:
 - Test locally with `wrangler dev` before submitting
 - Open an issue for major changes before starting work
 
+## 🤖 AI Development Resources
+
+Working with Cloudflare Workers and need AI assistance? These LLM-optimized resources are designed to help AI tools provide better, more accurate answers:
+
+### LLM-Optimized Documentation
+
+These URLs are specifically formatted for LLMs to consume as context:
+
+- **[Complete Developer Platform Docs](https://developers.cloudflare.com/developer-platform/llms-full.txt)** - Full Cloudflare developer documentation in LLM-friendly text format
+- **[Workers Documentation](https://developers.cloudflare.com/workers/llms-full.txt)** - Workers-specific documentation for AI tools
+- **[D1 Database Documentation](https://developers.cloudflare.com/d1/llms-full.txt)** - D1 SQL database reference
+- **[KV Documentation](https://developers.cloudflare.com/kv/llms-full.txt)** - Workers KV key-value storage
+- **[Durable Objects Documentation](https://developers.cloudflare.com/durable-objects/llms-full.txt)** - Stateful object coordination
+- **[R2 Documentation](https://developers.cloudflare.com/r2/llms-full.txt)** - Object storage reference
+- **[Workers AI Documentation](https://developers.cloudflare.com/workers-ai/llms-full.txt)** - AI inference on the edge
+- **[Vectorize Documentation](https://developers.cloudflare.com/vectorize/llms-full.txt)** - Vector database for embeddings
+- **[AI Gateway Documentation](https://developers.cloudflare.com/ai-gateway/llms-full.txt)** - AI API caching and observability
+
+### Model Context Protocol (MCP) Servers
+
+Connect your AI tools directly to Cloudflare's infrastructure:
+
+- **[MCP Servers for Cloudflare](https://developers.cloudflare.com/agents/model-context-protocol/mcp-servers-for-cloudflare/)** - Official MCP server integrations
+  - **Cloudflare MCP Server** - Query D1, KV, R2, and manage Workers
+  - **Wrangler MCP Server** - Deploy and manage Workers directly from AI tools
+
+### How to Use These Resources
+
+**For ChatGPT, Claude, or other LLMs:**
+
+```
+Read the Cloudflare Workers documentation: https://developers.cloudflare.com/workers/llms-full.txt
+
+Then help me with: [your question about this project]
+```
+
+**For AI Code Editors (Cursor, Windsurf, etc.):**
+
+- Add the `/llms-full.txt` URLs to your project context
+- Install MCP servers for real-time Cloudflare API access
+
+**For This Project Specifically:**
+
+```
+Context: Cloudflare Worker syncing Oura Ring health data to D1 database
+Stack: TypeScript, Hono router, OAuth2, D1, KV, cron triggers
+Docs needed: https://developers.cloudflare.com/workers/llms-full.txt
+             https://developers.cloudflare.com/d1/llms-full.txt
+```
+
 ## 📄 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

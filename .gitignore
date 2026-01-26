@@ -171,3 +171,6 @@ dist
 .ruff_cache/
 # OpenCode session context (local only)
 .opencode/
+
+# macOS
+.DS_Store
