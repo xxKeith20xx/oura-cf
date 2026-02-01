@@ -24,6 +24,7 @@ A Cloudflare Worker that syncs Oura Ring health data to a D1 database and serves
 - [API Endpoints](#api-endpoints)
 - [Deployment](#deployment)
 - [Configuration](#configuration)
+- [Cloudflare Access (Optional)](#cloudflare-access-optional)
 - [Grafana Setup](#grafana-setup)
 - [Development](#development)
 - [Contributing](#contributing)
@@ -170,13 +171,15 @@ OpenAPI Spec      Upsert Logic
 
 ### Public Endpoints (No Auth)
 
-| Endpoint          | Method | Description                       | Rate Limit       |
-| ----------------- | ------ | --------------------------------- | ---------------- |
-| `/health`         | GET    | Health check with request details | 1 req/60s per IP |
-| `/favicon.ico`    | GET    | Ring emoji favicon                | Cached 1 year    |
-| `/oauth/callback` | GET    | OAuth2 callback handler           | 1 req/60s per IP |
+| Endpoint          | Method | Description                       | Rate Limit        |
+| ----------------- | ------ | --------------------------------- | ----------------- |
+| `/health`         | GET    | Health check with request details | 1 req/60s per IP  |
+| `/favicon.ico`    | GET    | Ring emoji favicon                | Cached 1 year     |
+| `/oauth/callback` | GET    | OAuth2 callback handler           | 10 req/60s per IP |
 
 ### Authenticated Endpoints (Require Bearer Token)
+
+Rate limit: 300 requests per minute per IP (applies to all authenticated endpoints)
 
 | Endpoint               | Method | Description                         | Cache TTL |
 | ---------------------- | ------ | ----------------------------------- | --------- |
@@ -284,6 +287,27 @@ Key settings in `wrangler.jsonc`:
 }
 ```
 
+## 🔐 Cloudflare Access (Optional)
+
+For enhanced security and centralized audit logs, protect API endpoints with Cloudflare Access service tokens.
+
+### Setup
+
+1. **Create Service Token** in Zero Trust Dashboard (Access → Service Auth → Service Tokens)
+2. **Create Access Application** protecting your API endpoints
+3. **Configure Policy** with Service Auth action
+4. **Add Headers to Grafana** datasource configuration:
+   - `CF-Access-Client-Id: <token-id>`
+   - `CF-Access-Client-Secret: <token-secret>`
+
+### Benefits
+
+- **Observability**: Centralized access logs and analytics
+- **Defense in Depth**: Multiple authentication layers
+- **Token Rotation**: Supports graceful credential updates
+
+**Note**: Public endpoints (`/health`, `/oauth/callback`, favicons) should remain unprotected to ensure OAuth flow and monitoring continue to function.
+
 ## 📈 Grafana Setup
 
 ### Prerequisites
@@ -303,7 +327,7 @@ Key settings in `wrangler.jsonc`:
    - Name: `Oura API`
    - URL: `https://your-worker.workers.dev/api/sql`
    - Method: `POST`
-   - Headers: `Authorization: Bearer YOUR_GRAFANA_SECRET`
+   - Custom HTTP Headers (see below)
 
 3. **Import Dashboard**
    ```bash
@@ -311,6 +335,18 @@ Key settings in `wrangler.jsonc`:
    cat grafana-dashboard-structured.json
    # Import via Grafana UI → Dashboards → Import
    ```
+
+**Custom HTTP Headers Configuration:**
+
+Without Cloudflare Access:
+
+- `Authorization: Bearer YOUR_GRAFANA_SECRET`
+
+With Cloudflare Access (recommended):
+
+- `Authorization: Bearer YOUR_GRAFANA_SECRET`
+- `CF-Access-Client-Id: <service-token-client-id>`
+- `CF-Access-Client-Secret: <service-token-client-secret>`
 
 ### Dashboard Features
 

@@ -273,7 +273,7 @@ export default {
 				Response.json({
 					status: 'ok',
 					timestamp: new Date().toISOString(),
-					version: '1.0.1',
+					version: '1.0.3',
 					request: {
 						headers: headers,
 						method: request.method,
@@ -377,12 +377,12 @@ export default {
 		logAuthAttempt(true, request);
 
 		// Rate limit authenticated endpoints to prevent abuse if token leaks
-		// Allows 60 requests per minute per IP (1 per second sustained)
+		// Allows 300 requests per minute per IP (5 per second sustained)
 		const authRateLimitKey = `auth:${clientIP}`;
 		const { success: authRateLimit } = await env.AUTH_RATE_LIMITER.limit({ key: authRateLimitKey });
 
 		if (!authRateLimit) {
-			return withCors(Response.json({ error: 'Rate limit exceeded. Maximum 60 requests per minute.' }, { status: 429 }), origin);
+			return withCors(Response.json({ error: 'Rate limit exceeded. Maximum 300 requests per minute.' }, { status: 429 }), origin);
 		}
 
 		if (!env.oura_db) {

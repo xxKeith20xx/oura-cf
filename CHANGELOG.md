@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.3] - 2026-02-01
+
+### Changed
+
+- **Rate Limiting**: Relaxed authenticated endpoint rate limits to better support Grafana dashboards
+  - `AUTH_RATE_LIMITER`: 60 → 300 requests per minute (5 req/sec sustained)
+  - `UNAUTH_RATE_LIMITER`: 5 → 10 requests per minute
+  - Fixes 429 errors when loading Grafana dashboards with multiple panels
+
+### Documentation
+
+- Added Cloudflare Access setup guide for optional enhanced security
+- Updated Grafana configuration to document both authentication methods
+- Updated rate limit documentation to reflect new limits
+
 ## [1.0.1] - 2026-01-26
 
 ### Security
