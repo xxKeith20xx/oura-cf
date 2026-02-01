@@ -3,8 +3,12 @@
 # Or set as environment variable: export CLOUDFLARE_ACCOUNT_ID="your-account-id"
 CLOUDFLARE_ACCOUNT_ID=
 
-# Grafana API authentication token
+# Grafana API authentication token (primary)
 GRAFANA_SECRET=
+
+# Optional: Additional tokens for zero-downtime rotation
+# GRAFANA_SECRET_2=
+# GRAFANA_SECRET_3=
 
 # Oura OAuth credentials (optional, only if using OAuth flow)
 OURA_CLIENT_ID=
@@ -13,3 +17,7 @@ OURA_SCOPES=email personal daily heartrate workout tag session spo2 stress heart
 
 # Oura Personal Access Token (alternative to OAuth)
 OURA_PAT=
+
+# Optional: Query limits and timeouts
+# MAX_QUERY_ROWS=50000         # Maximum rows returned from SQL queries (default: 50000)
+# QUERY_TIMEOUT_MS=10000       # Query timeout in milliseconds (default: 10000)

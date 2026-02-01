@@ -2,12 +2,17 @@ export interface Env {
 	oura_db: D1Database;
 	RATE_LIMITER: RateLimit;
 	AUTH_RATE_LIMITER: RateLimit;
+	UNAUTH_RATE_LIMITER: RateLimit; // New: Rate limiter for unauthenticated requests
 	OURA_CACHE: KVNamespace;
 	GRAFANA_SECRET: string;
+	GRAFANA_SECRET_2?: string; // Optional secondary token for rotation
+	GRAFANA_SECRET_3?: string; // Optional tertiary token for rotation
 	OURA_CLIENT_ID?: string;
 	OURA_CLIENT_SECRET?: string;
 	OURA_SCOPES?: string;
 	OURA_PAT?: string;
+	MAX_QUERY_ROWS?: string; // Maximum rows to return from SQL queries (default: 50000)
+	QUERY_TIMEOUT_MS?: string; // Query timeout in milliseconds (default: 10000)
 }
 
 type OuraQueryMode = 'none' | 'date' | 'datetime';
@@ -52,11 +57,172 @@ interface OuraApiResponse<T> {
 // In-memory cache for OAuth tokens (reset on cold start)
 let tokenCache: { token: string; expiresAt: number } | null = null;
 
+// Security: Constant-time token comparison to prevent timing attacks
+async function constantTimeCompare(a: string, b: string): Promise<boolean> {
+	if (a.length !== b.length) {
+		// Still compare something to maintain constant time even on length mismatch
+		const dummy = 'x'.repeat(Math.max(a.length, b.length));
+		await crypto.subtle.digest('SHA-256', new TextEncoder().encode(dummy));
+		return false;
+	}
+
+	const encoder = new TextEncoder();
+	const aBytes = encoder.encode(a);
+	const bBytes = encoder.encode(b);
+
+	// Use HMAC for constant-time comparison
+	const key = await crypto.subtle.importKey('raw', aBytes, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+
+	const aSignature = await crypto.subtle.sign('HMAC', key, aBytes);
+	const bSignature = await crypto.subtle.sign('HMAC', key, bBytes);
+
+	// Compare the signatures
+	const aArray = new Uint8Array(aSignature);
+	const bArray = new Uint8Array(bSignature);
+
+	let result = 0;
+	for (let i = 0; i < aArray.length; i++) {
+		result |= aArray[i] ^ bArray[i];
+	}
+
+	return result === 0;
+}
+
+// Security: Validate Bearer token against multiple secrets (supports rotation)
+async function validateBearerToken(authHeader: string | null, env: Env): Promise<boolean> {
+	if (!authHeader || !authHeader.startsWith('Bearer ')) {
+		return false;
+	}
+
+	const token = authHeader.substring(7); // Remove "Bearer " prefix
+
+	// Check all configured secrets (supports token rotation)
+	const secrets = [env.GRAFANA_SECRET, env.GRAFANA_SECRET_2, env.GRAFANA_SECRET_3].filter(
+		(s): s is string => typeof s === 'string' && s.length > 0,
+	);
+
+	for (const secret of secrets) {
+		if (await constantTimeCompare(token, secret)) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
+// Security: Log authentication attempt
+function logAuthAttempt(success: boolean, request: Request, details?: string): void {
+	const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
+	const userAgent = request.headers.get('User-Agent') || 'unknown';
+	const cfData = request.cf as any;
+
+	console.log(
+		JSON.stringify({
+			type: 'auth_attempt',
+			success,
+			timestamp: new Date().toISOString(),
+			ip: clientIP,
+			country: cfData?.country || 'unknown',
+			userAgent: userAgent.slice(0, 200),
+			url: new URL(request.url).pathname,
+			details: details || undefined,
+		}),
+	);
+}
+
+// Security: Log SQL query execution
+function logSqlQuery(request: Request, sql: string, params: unknown[], executionTimeMs: number, rowCount: number, error?: string): void {
+	const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
+
+	console.log(
+		JSON.stringify({
+			type: 'sql_query',
+			timestamp: new Date().toISOString(),
+			ip: clientIP,
+			sqlPreview: sql.slice(0, 200), // Log first 200 chars
+			sqlLength: sql.length,
+			paramCount: params.length,
+			executionTimeMs,
+			rowCount,
+			error: error || undefined,
+		}),
+	);
+}
+
 // Validation constants
 const MAX_SQL_LENGTH = 10_000;
 const MAX_BACKFILL_DAYS = 3650;
 const OPENAPI_CACHE_TTL = 86400; // 24 hours
 const RESPONSE_CACHE_TTL = 300; // 5 minutes (use 'private' cache for authenticated endpoints)
+const DEFAULT_MAX_QUERY_ROWS = 50_000; // Default max rows for SQL queries
+const DEFAULT_QUERY_TIMEOUT_MS = 10_000; // Default query timeout (10 seconds)
+const MAX_PARAMS = 100; // Maximum SQL parameters
+
+// SQL Whitelist: Allowed keywords and functions for read-only queries
+const ALLOWED_SQL_KEYWORDS = new Set([
+	'select',
+	'from',
+	'where',
+	'and',
+	'or',
+	'not',
+	'in',
+	'is',
+	'null',
+	'like',
+	'between',
+	'order',
+	'by',
+	'group',
+	'having',
+	'limit',
+	'offset',
+	'join',
+	'left',
+	'right',
+	'inner',
+	'outer',
+	'cross',
+	'on',
+	'as',
+	'distinct',
+	'union',
+	'all',
+	'case',
+	'when',
+	'then',
+	'else',
+	'end',
+	'cast',
+]);
+
+const ALLOWED_SQL_FUNCTIONS = new Set([
+	'count',
+	'sum',
+	'avg',
+	'min',
+	'max',
+	'abs',
+	'round',
+	'ceil',
+	'floor',
+	'length',
+	'substr',
+	'trim',
+	'ltrim',
+	'rtrim',
+	'upper',
+	'lower',
+	'coalesce',
+	'nullif',
+	'ifnull',
+	'date',
+	'time',
+	'datetime',
+	'julianday',
+	'strftime',
+	'printf',
+]);
 
 export default {
 	// 1. Cron Trigger: Automated Daily Sync
@@ -137,10 +303,10 @@ export default {
 		}
 
 		if (url.pathname === '/oauth/callback') {
-			// Rate limit: Prevent OAuth callback abuse (1 request per 10 seconds per IP)
+			// Rate limit: Prevent OAuth callback abuse (apply unauthenticated rate limit)
 			const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
-			const rateLimitKey = `oauth:${clientIP}`;
-			const { success } = await env.RATE_LIMITER.limit({ key: rateLimitKey });
+			const rateLimitKey = `unauth:${clientIP}`;
+			const { success } = await env.UNAUTH_RATE_LIMITER.limit({ key: rateLimitKey });
 			if (!success) {
 				return withCors(Response.json({ error: 'Rate limit exceeded. Please wait before retrying.' }, { status: 429 }), origin);
 			}
@@ -188,13 +354,30 @@ export default {
 			);
 		}
 
-		if (auth !== `Bearer ${env.GRAFANA_SECRET}`) {
+		// Security: Rate limit unauthenticated requests first (prevents brute-force)
+		// Limit: 5 requests per minute per IP for unauthenticated requests
+		const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
+		const unauthRateLimitKey = `unauth:${clientIP}`;
+		const { success: unauthRateLimit } = await env.UNAUTH_RATE_LIMITER.limit({ key: unauthRateLimitKey });
+
+		if (!unauthRateLimit) {
+			logAuthAttempt(false, request, 'Rate limit exceeded (unauthenticated)');
+			return withCors(Response.json({ error: 'Rate limit exceeded. Please wait before retrying.' }, { status: 429 }), origin);
+		}
+
+		// Security: Validate authentication using constant-time comparison
+		const isAuthenticated = await validateBearerToken(auth, env);
+
+		if (!isAuthenticated) {
+			logAuthAttempt(false, request, 'Invalid or missing token');
 			return withCors(new Response('Unauthorized', { status: 401 }), origin);
 		}
 
+		// Authentication successful - log it
+		logAuthAttempt(true, request);
+
 		// Rate limit authenticated endpoints to prevent abuse if token leaks
 		// Allows 60 requests per minute per IP (1 per second sustained)
-		const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
 		const authRateLimitKey = `auth:${clientIP}`;
 		const { success: authRateLimit } = await env.AUTH_RATE_LIMITER.limit({ key: authRateLimitKey });
 
@@ -330,31 +513,83 @@ export default {
 		}
 
 		if (url.pathname === '/api/sql' && request.method === 'POST') {
-			const body = (await request.json().catch(() => null)) as { sql?: unknown; params?: unknown } | null;
-
-			const sql = typeof body?.sql === 'string' ? body.sql.trim() : '';
-			const params = Array.isArray(body?.params) ? body.params : [];
-
-			// Validation: SQL length limit
-			if (sql.length > MAX_SQL_LENGTH) {
-				return withCors(Response.json({ error: `SQL too large (max ${MAX_SQL_LENGTH} characters)` }, { status: 400 }), origin);
-			}
-
-			// Validation: Read-only queries only
-			if (!isReadOnlySql(sql)) {
-				return withCors(new Response('Only read-only SQL is allowed', { status: 400 }), origin);
-			}
-
-			// Validation: Parameter count limit
-			if (params.length > 100) {
-				return withCors(Response.json({ error: 'Too many parameters (max 100)' }, { status: 400 }), origin);
-			}
+			const queryStartTime = Date.now();
+			let sql = '';
+			let params: unknown[] = [];
 
 			try {
-				const result = await env.oura_db
+				const body = (await request.json().catch(() => null)) as { sql?: unknown; params?: unknown } | null;
+
+				sql = typeof body?.sql === 'string' ? body.sql.trim() : '';
+				params = Array.isArray(body?.params) ? body.params : [];
+
+				// Validation: SQL length limit
+				if (sql.length === 0) {
+					return withCors(Response.json({ error: 'SQL query is required' }, { status: 400 }), origin);
+				}
+
+				if (sql.length > MAX_SQL_LENGTH) {
+					return withCors(Response.json({ error: `SQL too large (max ${MAX_SQL_LENGTH} characters)` }, { status: 400 }), origin);
+				}
+
+				// Validation: Read-only queries only
+				if (!isReadOnlySql(sql)) {
+					logSqlQuery(request, sql, params, Date.now() - queryStartTime, 0, 'Query blocked: not read-only');
+					return withCors(new Response('Only read-only SQL queries are allowed', { status: 400 }), origin);
+				}
+
+				// Validation: Parameter count limit
+				if (params.length > MAX_PARAMS) {
+					return withCors(Response.json({ error: `Too many parameters (max ${MAX_PARAMS})` }, { status: 400 }), origin);
+				}
+
+				// Security: Analyze query complexity
+				const complexity = analyzeQueryComplexity(sql);
+				if (complexity.score > 100) {
+					console.warn('High complexity query', {
+						complexity: complexity.score,
+						warnings: complexity.warnings,
+						sqlPreview: sql.slice(0, 100),
+						timestamp: new Date().toISOString(),
+					});
+				}
+
+				// Get configuration with defaults
+				const maxRows = env.MAX_QUERY_ROWS ? parseInt(env.MAX_QUERY_ROWS, 10) : DEFAULT_MAX_QUERY_ROWS;
+				const timeoutMs = env.QUERY_TIMEOUT_MS ? parseInt(env.QUERY_TIMEOUT_MS, 10) : DEFAULT_QUERY_TIMEOUT_MS;
+
+				// Execute query with timeout
+				const queryPromise = env.oura_db
 					.prepare(sql)
 					.bind(...params)
 					.all();
+
+				const timeoutPromise = new Promise<never>((_, reject) => {
+					setTimeout(() => reject(new Error('Query timeout exceeded')), timeoutMs);
+				});
+
+				const result = await Promise.race([queryPromise, timeoutPromise]);
+
+				const executionTime = Date.now() - queryStartTime;
+				const rowCount = result.results?.length || 0;
+
+				// Security: Enforce row limit
+				if (rowCount > maxRows) {
+					logSqlQuery(request, sql, params, executionTime, rowCount, `Too many rows returned: ${rowCount}`);
+					return withCors(
+						Response.json(
+							{
+								error: 'Query returned too many rows',
+								hint: `Maximum ${maxRows} rows allowed. Please add a LIMIT clause or use more specific filters.`,
+							},
+							{ status: 400 },
+						),
+						origin,
+					);
+				}
+
+				// Log successful query
+				logSqlQuery(request, sql, params, executionTime, rowCount);
 
 				// Detect stats/metadata queries (COUNT(*) across all tables)
 				// These queries scan millions of rows but results change infrequently
@@ -368,12 +603,46 @@ export default {
 						headers: {
 							'Content-Type': 'application/json',
 							'Cache-Control': `private, max-age=${cacheTTL}`,
+							'X-Content-Type-Options': 'nosniff',
+							'X-Frame-Options': 'DENY',
+							'X-Query-Time-Ms': executionTime.toString(),
+							'X-Row-Count': rowCount.toString(),
 						},
 					}),
 					origin,
 				);
 			} catch (err) {
-				return withCors(Response.json({ error: 'D1 query failed', details: String(err).slice(0, 500) }, { status: 500 }), origin);
+				const executionTime = Date.now() - queryStartTime;
+				const errorMessage = err instanceof Error ? err.message : String(err);
+
+				// Log failed query
+				logSqlQuery(request, sql, params, executionTime, 0, errorMessage);
+
+				// Security: Don't leak detailed database errors to clients
+				if (errorMessage.includes('timeout')) {
+					return withCors(
+						Response.json(
+							{
+								error: 'Query timeout',
+								hint: 'Your query took too long to execute. Try simplifying it or adding more specific filters.',
+							},
+							{ status: 408 },
+						),
+						origin,
+					);
+				}
+
+				// Generic error message (don't expose internal details)
+				return withCors(
+					Response.json(
+						{
+							error: 'Query execution failed',
+							hint: 'Please check your SQL syntax and try again.',
+						},
+						{ status: 500 },
+					),
+					origin,
+				);
 			}
 		}
 
@@ -1081,12 +1350,70 @@ async function loadOuraResourcesFromOpenApi(env: Env): Promise<OuraResource[]> {
 
 function isReadOnlySql(sql: string): boolean {
 	if (!sql) return false;
-	const normalized = stripLeadingSqlComments(sql).replace(/\s+/g, ' ').trim();
-	if (!/^(select|with)\b/i.test(normalized)) return false;
+	const normalized = stripLeadingSqlComments(sql).replace(/\s+/g, ' ').trim().toLowerCase();
+
+	// Must start with SELECT or WITH (CTE)
+	if (!/^(select|with)\b/.test(normalized)) return false;
+
+	// No multiple statements
 	if (normalized.includes(';')) return false;
-	if (/\boura_oauth_tokens\b/i.test(normalized)) return false;
-	if (/\boura_oauth_states\b/i.test(normalized)) return false;
-	return !/\b(insert|update|delete|drop|alter|create|replace|vacuum|pragma|attach|detach)\b/i.test(normalized);
+
+	// Block access to sensitive tables
+	const blockedTables = ['oura_oauth_tokens', 'oura_oauth_states'];
+	for (const table of blockedTables) {
+		if (new RegExp(`\\b${table}\\b`, 'i').test(normalized)) {
+			return false;
+		}
+	}
+
+	// Block any write operations
+	const writeOps = ['insert', 'update', 'delete', 'drop', 'alter', 'create', 'replace', 'vacuum', 'pragma', 'attach', 'detach'];
+	for (const op of writeOps) {
+		if (new RegExp(`\\b${op}\\b`).test(normalized)) {
+			return false;
+		}
+	}
+
+	// Check for potentially dangerous patterns
+	// Block LIKE with leading wildcard (can be expensive)
+	if (/like\s+['"]%/.test(normalized)) {
+		console.warn('SQL query blocked: LIKE with leading wildcard', { sqlPreview: sql.slice(0, 100) });
+		return false;
+	}
+
+	return true;
+}
+
+// Security: Analyze query complexity (simple heuristic)
+function analyzeQueryComplexity(sql: string): { score: number; warnings: string[] } {
+	const normalized = sql.toLowerCase();
+	let score = 0;
+	const warnings: string[] = [];
+
+	// Count joins (each adds complexity)
+	const joinCount = (normalized.match(/\bjoin\b/g) || []).length;
+	score += joinCount * 10;
+	if (joinCount > 5) warnings.push(`High join count: ${joinCount}`);
+
+	// Count subqueries
+	const subqueryCount = (normalized.match(/\(select\b/g) || []).length;
+	score += subqueryCount * 15;
+	if (subqueryCount > 3) warnings.push(`High subquery count: ${subqueryCount}`);
+
+	// Count unions
+	const unionCount = (normalized.match(/\bunion\b/g) || []).length;
+	score += unionCount * 5;
+
+	// LIKE operations can be expensive
+	const likeCount = (normalized.match(/\blike\b/g) || []).length;
+	score += likeCount * 5;
+
+	// GROUP BY can be expensive on large datasets
+	if (normalized.includes('group by')) {
+		score += 20;
+	}
+
+	return { score, warnings };
 }
 
 async function exchangeAuthorizationCodeForToken(env: Env, code: string, redirectUri: string): Promise<OuraTokenResponse> {
@@ -1325,10 +1652,23 @@ function withCors(response: Response, origin: string | null): Response {
 	// Validate origin and use first allowed origin as fallback
 	const allowOrigin = origin && allowedOrigins.includes(origin) ? origin : allowedOrigins[0];
 
+	// CORS headers
 	headers.set('Access-Control-Allow-Origin', allowOrigin);
 	headers.set('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
 	headers.set('Access-Control-Allow-Headers', 'Authorization,Content-Type');
 	headers.set('Vary', 'Origin');
+
+	// Security headers
+	if (!headers.has('X-Content-Type-Options')) {
+		headers.set('X-Content-Type-Options', 'nosniff');
+	}
+	if (!headers.has('X-Frame-Options')) {
+		headers.set('X-Frame-Options', 'DENY');
+	}
+	headers.set('X-XSS-Protection', '1; mode=block');
+	headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+	headers.set('Content-Security-Policy', "default-src 'none'; script-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none';");
+
 	return new Response(response.body, {
 		status: response.status,
 		statusText: response.statusText,

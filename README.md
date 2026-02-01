@@ -11,10 +11,10 @@ A Cloudflare Worker that syncs Oura Ring health data to a D1 database and serves
 - **📊 Complete Data Coverage**: Syncs all Oura Ring v2 API endpoints (18+ resources)
 - **🔄 Automated Sync**: Cron-based data updates (3x daily: 1am, 12pm, 6pm)
 - **📈 Grafana Integration**: Pre-built dashboard with 40+ visualizations
-- **🔒 Secure**: OAuth2 authentication, rate limiting, read-only SQL endpoint
+- **🔒 Enterprise Security**: Multi-token auth, constant-time comparison, 3-tier rate limiting, query timeouts
 - **💰 Cost-Efficient**: Runs within Cloudflare's free tier limits
 - **⚡ Low Latency**: Edge caching with appropriate TTL strategies
-- **🛡️ Production-Ready**: Comprehensive error handling and request logging
+- **🛡️ Production-Ready**: Comprehensive logging, error handling, and monitoring
 
 ## 📋 Table of Contents
 
@@ -250,10 +250,14 @@ npx wrangler deploy
 
 | Secret               | Required | Description                                     |
 | -------------------- | -------- | ----------------------------------------------- |
-| `GRAFANA_SECRET`     | Yes      | Bearer token for API authentication             |
+| `GRAFANA_SECRET`     | Yes      | Bearer token for API authentication (primary)   |
+| `GRAFANA_SECRET_2`   | No       | Secondary token for zero-downtime rotation      |
+| `GRAFANA_SECRET_3`   | No       | Tertiary token for zero-downtime rotation       |
 | `OURA_CLIENT_ID`     | Yes      | OAuth2 client ID from Oura developer portal     |
 | `OURA_CLIENT_SECRET` | Yes      | OAuth2 client secret from Oura developer portal |
 | `OURA_PAT`           | No       | Personal access token (alternative to OAuth)    |
+| `MAX_QUERY_ROWS`     | No       | Maximum rows from SQL queries (default: 50000)  |
+| `QUERY_TIMEOUT_MS`   | No       | Query timeout in milliseconds (default: 10000)  |
 
 ### Wrangler Configuration
 
