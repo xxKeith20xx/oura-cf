@@ -1,0 +1,90 @@
+name: Create Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+      - 'v*.*.*-*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          # Extract version number from tag (e.g., v1.0.3 -> 1.0.3)
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+          # Check if this is a pre-release (contains -alpha, -beta, -rc, or -preview)
+          if [[ "$VERSION" =~ -(alpha|beta|rc|preview) ]]; then
+            echo "prerelease=true" >> $GITHUB_OUTPUT
+          else
+            echo "prerelease=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Extract changelog for this version
+        id: changelog
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+
+          # Extract changelog content between this version and the next version header
+          # This preserves all markdown formatting including headers, bullets, and code blocks
+          CHANGELOG_CONTENT=$(sed -n "/## \[$VERSION\]/,/## \[/p" CHANGELOG.md | sed '$d' | tail -n +2)
+
+          if [ -z "$CHANGELOG_CONTENT" ]; then
+            echo "ERROR: Version $VERSION not found in CHANGELOG.md"
+            echo "Please update CHANGELOG.md before creating a release"
+            exit 1
+          fi
+
+          # Save to file to handle multiline content properly
+          echo "$CHANGELOG_CONTENT" > /tmp/changelog.txt
+
+          # Extract the date from the version header for the title
+          DATE=$(sed -n "s/^## \[$VERSION\] - \(.*\)$/\1/p" CHANGELOG.md)
+
+          # Try to extract a short description from the first section
+          # Look for the first bullet point or header after the version
+          FIRST_LINE=$(echo "$CHANGELOG_CONTENT" | grep -E "^(- |### )" | head -n 1 | sed 's/^- \*\*\(.*\)\*\*:.*/\1/' | sed 's/^### //')
+
+          if [ -n "$FIRST_LINE" ] && [ "$FIRST_LINE" != "Changed" ] && [ "$FIRST_LINE" != "Added" ] && [ "$FIRST_LINE" != "Fixed" ] && [ "$FIRST_LINE" != "Security" ] && [ "$FIRST_LINE" != "Documentation" ]; then
+            echo "title=v$VERSION - $FIRST_LINE" >> $GITHUB_OUTPUT
+          else
+            echo "title=v$VERSION" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TITLE="${{ steps.changelog.outputs.title }}"
+          TAG="${{ steps.version.outputs.tag }}"
+          PRERELEASE="${{ steps.version.outputs.prerelease }}"
+
+          # Create release with changelog content
+          if [ "$PRERELEASE" = "true" ]; then
+            gh release create "$TAG" \
+              --title "$TITLE" \
+              --notes-file /tmp/changelog.txt \
+              --prerelease
+          else
+            gh release create "$TAG" \
+              --title "$TITLE" \
+              --notes-file /tmp/changelog.txt \
+              --latest
+          fi
+
+          echo "✅ Successfully created GitHub Release: $TITLE"
