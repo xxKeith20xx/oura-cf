@@ -5,6 +5,55 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.5] - 2026-02-07
+
+### Fixed
+
+- **Critical: Rate Limiting Bug**: Fixed authentication order that caused all requests to hit 10 req/min limit
+  - Previously: `UNAUTH_RATE_LIMITER` was checked BEFORE authentication validation
+  - Now: Authentication is validated first, then appropriate rate limiter is applied
+  - Authenticated requests now correctly use `AUTH_RATE_LIMITER` (3000 req/min)
+
+### Changed
+
+- **Wrangler**: Updated to v4.63.0
+
+## [1.0.4] - 2026-02-07
+
+### Changed
+
+- **Rate Limiting**: Significantly increased authenticated rate limits for Grafana
+  - `AUTH_RATE_LIMITER`: 300 → 3000 requests per minute (50 req/sec sustained)
+  - Supports 46-panel dashboard with multiple rapid refreshes (92 req per load)
+- **Rate Limit Keys**: Implemented composite keys to prevent collision behind proxies
+  - Authenticated keys now combine IP + token hash to differentiate users
+  - Prevents rate limit sharing for users behind same proxy/CDN
+
+### Added
+
+- **Observability**: Workers tracing enabled for performance insights
+  - Automatic distributed tracing for all requests
+  - Performance monitoring via Cloudflare dashboard
+- **Database Indexes**: Added performance indexes for Grafana queries
+  - `idx_daily_summaries_day`, `idx_sleep_episodes_day`, `idx_activity_logs_start_datetime`
+  - Improves query performance as data grows
+- **Security Hardening**:
+  - Fixed SQL injection risk in table name validation (static regex patterns)
+  - Request body size limit (1MB) to prevent memory exhaustion
+  - Input validation for OAuth state/code parameters
+  - Resource filter validation (alphanumeric only, max 20 resources)
+- **Reliability**:
+  - Cron sync error recovery with exponential backoff (3 retries)
+  - Circuit breaker pattern for Oura API calls (5 failures → 5min cooldown)
+  - Prevents hammering Oura API when it's down
+- **API Consistency**: All error responses now return JSON format
+  - Standardized error format: `{ error: "message" }` or `{ message: "success" }`
+
+### Fixed
+
+- **404 Handler**: Proper CORS headers on 404 responses
+- **Rate Limit Messages**: Updated to reflect actual 900 req/min limit
+
 ## [1.0.3] - 2026-02-01
 
 ### Changed

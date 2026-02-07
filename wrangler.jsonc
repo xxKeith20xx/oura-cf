@@ -12,6 +12,9 @@
 	"observability": {
 		"enabled": true,
 		"head_sampling_rate": 1,
+		"traces": {
+			"enabled": true,
+		},
 	},
 	"kv_namespaces": [
 		{
@@ -41,7 +44,7 @@
 			"name": "AUTH_RATE_LIMITER",
 			"namespace_id": "1002",
 			"simple": {
-				"limit": 300,
+				"limit": 3000,
 				"period": 60,
 			},
 		},

@@ -69,7 +69,7 @@ A Cloudflare Worker that syncs Oura Ring health data to a D1 database and serves
 | **Authentication** | Oura OAuth2            | Secure API access               |
 | **Visualization**  | Grafana Cloud          | Dashboards and analytics        |
 | **Language**       | TypeScript 5.9         | Type-safe development           |
-| **Deployment**     | Wrangler 4.60          | CLI deployment tool             |
+| **Deployment**     | Wrangler 4.63          | CLI deployment tool             |
 
 ## 🚀 Quick Start
 
@@ -179,7 +179,7 @@ OpenAPI Spec      Upsert Logic
 
 ### Authenticated Endpoints (Require Bearer Token)
 
-Rate limit: 300 requests per minute per IP (applies to all authenticated endpoints)
+Rate limit: 3000 requests per minute per IP (applies to all authenticated endpoints)
 
 | Endpoint               | Method | Description                         | Cache TTL |
 | ---------------------- | ------ | ----------------------------------- | --------- |

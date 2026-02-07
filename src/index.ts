@@ -88,6 +88,30 @@ async function constantTimeCompare(a: string, b: string): Promise<boolean> {
 	return result === 0;
 }
 
+// Security: Generate composite rate limit key to prevent collision behind proxies
+// Uses IP + token prefix hash to differentiate users behind same proxy
+async function getRateLimitKey(
+	clientIP: string,
+	authHeader: string | null,
+	type: 'auth' | 'unauth' | 'health' | 'backfill',
+): Promise<string> {
+	const baseKey = `${type}:${clientIP}`;
+
+	if (type === 'auth' && authHeader) {
+		// Hash first 16 chars of token to differentiate users behind same IP
+		const tokenPrefix = authHeader.slice(7, 23); // After "Bearer "
+		const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(tokenPrefix));
+		const hashArray = Array.from(new Uint8Array(hash));
+		const hashHex = hashArray
+			.map((b) => b.toString(16).padStart(2, '0'))
+			.join('')
+			.slice(0, 8);
+		return `${baseKey}:${hashHex}`;
+	}
+
+	return baseKey;
+}
+
 // Security: Validate Bearer token against multiple secrets (supports rotation)
 async function validateBearerToken(authHeader: string | null, env: Env): Promise<boolean> {
 	if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -157,6 +181,7 @@ const RESPONSE_CACHE_TTL = 300; // 5 minutes (use 'private' cache for authentica
 const DEFAULT_MAX_QUERY_ROWS = 50_000; // Default max rows for SQL queries
 const DEFAULT_QUERY_TIMEOUT_MS = 10_000; // Default query timeout (10 seconds)
 const MAX_PARAMS = 100; // Maximum SQL parameters
+const MAX_BODY_SIZE = 1_048_576; // 1MB max request body size
 
 // SQL Whitelist: Allowed keywords and functions for read-only queries
 const ALLOWED_SQL_KEYWORDS = new Set([
@@ -224,14 +249,105 @@ const ALLOWED_SQL_FUNCTIONS = new Set([
 	'printf',
 ]);
 
+// Circuit breaker state (in-memory, resets on Worker restart)
+const circuitBreakerState = {
+	failures: 0,
+	lastFailureTime: 0,
+	state: 'closed' as 'closed' | 'open' | 'half-open',
+};
+
+const CIRCUIT_BREAKER_THRESHOLD = 5; // Open after 5 failures
+const CIRCUIT_BREAKER_TIMEOUT = 300000; // 5 minutes before trying again
+
+// Circuit breaker wrapper for Oura API calls
+async function withCircuitBreaker<T>(fn: () => Promise<T>, operationName: string): Promise<T> {
+	const now = Date.now();
+
+	// If circuit is open, check if we should try half-open
+	if (circuitBreakerState.state === 'open') {
+		if (now - circuitBreakerState.lastFailureTime > CIRCUIT_BREAKER_TIMEOUT) {
+			console.log('Circuit breaker entering half-open state', { operation: operationName });
+			circuitBreakerState.state = 'half-open';
+		} else {
+			throw new Error(`Circuit breaker is OPEN for ${operationName}. Try again later.`);
+		}
+	}
+
+	try {
+		const result = await fn();
+
+		// Success: reset circuit if it was half-open
+		if (circuitBreakerState.state === 'half-open') {
+			console.log('Circuit breaker closed after successful call', { operation: operationName });
+			circuitBreakerState.state = 'closed';
+			circuitBreakerState.failures = 0;
+		}
+
+		return result;
+	} catch (err) {
+		circuitBreakerState.failures++;
+		circuitBreakerState.lastFailureTime = now;
+
+		if (circuitBreakerState.failures >= CIRCUIT_BREAKER_THRESHOLD) {
+			console.error('Circuit breaker opened due to repeated failures', {
+				operation: operationName,
+				failures: circuitBreakerState.failures,
+				timestamp: new Date().toISOString(),
+			});
+			circuitBreakerState.state = 'open';
+		}
+
+		throw err;
+	}
+}
+
+// Retry utility with exponential backoff for cron jobs
+async function retryWithBackoff<T>(fn: () => Promise<T>, options: { maxRetries: number; baseDelay: number; maxDelay: number }): Promise<T> {
+	const { maxRetries, baseDelay, maxDelay } = options;
+	let lastError: Error | undefined;
+
+	for (let attempt = 0; attempt <= maxRetries; attempt++) {
+		try {
+			return await fn();
+		} catch (err) {
+			lastError = err instanceof Error ? err : new Error(String(err));
+
+			if (attempt === maxRetries) {
+				console.error('Cron sync failed after max retries', {
+					attempts: attempt + 1,
+					error: lastError.message,
+					timestamp: new Date().toISOString(),
+				});
+				throw lastError;
+			}
+
+			const delay = Math.min(baseDelay * Math.pow(2, attempt), maxDelay);
+			console.warn('Cron sync attempt failed, retrying', {
+				attempt: attempt + 1,
+				maxRetries: maxRetries + 1,
+				delayMs: delay,
+				error: lastError.message,
+				timestamp: new Date().toISOString(),
+			});
+
+			await new Promise((resolve) => setTimeout(resolve, delay));
+		}
+	}
+
+	throw lastError;
+}
+
 export default {
 	// 1. Cron Trigger: Automated Daily Sync
 	async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext) {
 		ctx.waitUntil(
-			Promise.all([
-				syncData(env, 3, 0, null),
-				updateTableStats(env), // Update stats cache
-			]),
+			retryWithBackoff(
+				async () => {
+					await syncData(env, 3, 0, null);
+					await updateTableStats(env);
+				},
+				{ maxRetries: 3, baseDelay: 5000, maxDelay: 60000 },
+			),
 		);
 	},
 
@@ -254,10 +370,18 @@ export default {
 			);
 		}
 
+		// Security: Check request body size for POST/PUT requests
+		if (request.method === 'POST' || request.method === 'PUT') {
+			const contentLength = request.headers.get('Content-Length');
+			if (contentLength && parseInt(contentLength, 10) > MAX_BODY_SIZE) {
+				return withCors(Response.json({ error: 'Request body too large (max 1MB)' }, { status: 413 }), origin);
+			}
+		}
+
 		if (url.pathname === '/health') {
 			// Rate limit: 1 request per minute per IP for health checks
 			const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
-			const rateLimitKey = `health:${clientIP}`;
+			const rateLimitKey = await getRateLimitKey(clientIP, null, 'health');
 			const { success } = await env.RATE_LIMITER.limit({ key: rateLimitKey });
 			if (!success) {
 				return withCors(Response.json({ error: 'Rate limit exceeded. Max 1 request per 60 seconds.' }, { status: 429 }), origin);
@@ -273,7 +397,7 @@ export default {
 				Response.json({
 					status: 'ok',
 					timestamp: new Date().toISOString(),
-					version: '1.0.3',
+					version: '1.0.5',
 					request: {
 						headers: headers,
 						method: request.method,
@@ -305,7 +429,7 @@ export default {
 		if (url.pathname === '/oauth/callback') {
 			// Rate limit: Prevent OAuth callback abuse (apply unauthenticated rate limit)
 			const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
-			const rateLimitKey = `unauth:${clientIP}`;
+			const rateLimitKey = await getRateLimitKey(clientIP, null, 'unauth');
 			const { success } = await env.UNAUTH_RATE_LIMITER.limit({ key: rateLimitKey });
 			if (!success) {
 				return withCors(Response.json({ error: 'Rate limit exceeded. Please wait before retrying.' }, { status: 429 }), origin);
@@ -317,12 +441,26 @@ export default {
 
 			const err = url.searchParams.get('error');
 			if (err) {
-				return withCors(Response.json({ error: err }, { status: 400 }), origin);
+				// Validate error parameter length to prevent log injection
+				const sanitizedError = err.slice(0, 200);
+				return withCors(Response.json({ error: sanitizedError }, { status: 400 }), origin);
 			}
 			const code = url.searchParams.get('code');
 			const state = url.searchParams.get('state');
+
+			// Validation: Check parameter lengths and formats
 			if (!code || !state) {
 				return withCors(Response.json({ error: 'Missing code/state' }, { status: 400 }), origin);
+			}
+
+			// Validation: OAuth authorization codes are typically 40-50 chars
+			if (code.length < 10 || code.length > 100) {
+				return withCors(Response.json({ error: 'Invalid code format' }, { status: 400 }), origin);
+			}
+
+			// Validation: State should be a UUID (36 chars) or similar
+			if (state.length < 10 || state.length > 100) {
+				return withCors(Response.json({ error: 'Invalid state format' }, { status: 400 }), origin);
 			}
 
 			const stateRow = await env.oura_db
@@ -345,44 +483,38 @@ export default {
 			callbackUrl.search = '';
 			const token = await exchangeAuthorizationCodeForToken(env, code, callbackUrl.toString());
 			await upsertOauthToken(env, stateRow.user_id ?? 'default', token);
-			return withCors(
-				new Response('OK', {
-					status: 200,
-					headers: { 'Content-Type': 'text/plain; charset=utf-8' },
-				}),
-				origin,
-			);
-		}
-
-		// Security: Rate limit unauthenticated requests first (prevents brute-force)
-		// Limit: 5 requests per minute per IP for unauthenticated requests
-		const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
-		const unauthRateLimitKey = `unauth:${clientIP}`;
-		const { success: unauthRateLimit } = await env.UNAUTH_RATE_LIMITER.limit({ key: unauthRateLimitKey });
-
-		if (!unauthRateLimit) {
-			logAuthAttempt(false, request, 'Rate limit exceeded (unauthenticated)');
-			return withCors(Response.json({ error: 'Rate limit exceeded. Please wait before retrying.' }, { status: 429 }), origin);
+			return withCors(Response.json({ message: 'OK' }, { status: 200 }), origin);
 		}
 
 		// Security: Validate authentication using constant-time comparison
+		const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
 		const isAuthenticated = await validateBearerToken(auth, env);
 
 		if (!isAuthenticated) {
+			// Rate limit ONLY unauthenticated/failed auth requests (prevents brute-force)
+			// Limit: 10 requests per minute per IP for failed auth attempts
+			const unauthRateLimitKey = await getRateLimitKey(clientIP, null, 'unauth');
+			const { success: unauthRateLimit } = await env.UNAUTH_RATE_LIMITER.limit({ key: unauthRateLimitKey });
+
+			if (!unauthRateLimit) {
+				logAuthAttempt(false, request, 'Rate limit exceeded (unauthenticated)');
+				return withCors(Response.json({ error: 'Rate limit exceeded. Please wait before retrying.' }, { status: 429 }), origin);
+			}
+
 			logAuthAttempt(false, request, 'Invalid or missing token');
-			return withCors(new Response('Unauthorized', { status: 401 }), origin);
+			return withCors(Response.json({ error: 'Unauthorized' }, { status: 401 }), origin);
 		}
 
 		// Authentication successful - log it
 		logAuthAttempt(true, request);
 
 		// Rate limit authenticated endpoints to prevent abuse if token leaks
-		// Allows 300 requests per minute per IP (5 per second sustained)
-		const authRateLimitKey = `auth:${clientIP}`;
+		// Allows 3000 requests per minute per IP + token combination (50 per second sustained)
+		const authRateLimitKey = await getRateLimitKey(clientIP, auth, 'auth');
 		const { success: authRateLimit } = await env.AUTH_RATE_LIMITER.limit({ key: authRateLimitKey });
 
 		if (!authRateLimit) {
-			return withCors(Response.json({ error: 'Rate limit exceeded. Maximum 300 requests per minute.' }, { status: 429 }), origin);
+			return withCors(Response.json({ error: 'Rate limit exceeded. Maximum 3000 requests per minute.' }, { status: 429 }), origin);
 		}
 
 		if (!env.oura_db) {
@@ -424,7 +556,7 @@ export default {
 		if (url.pathname === '/backfill') {
 			// Rate limiting: prevent backfill spam (1 request per 60 seconds per IP)
 			const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
-			const rateLimitKey = `backfill:${clientIP}`;
+			const rateLimitKey = await getRateLimitKey(clientIP, auth, 'backfill');
 			const { success } = await env.RATE_LIMITER.limit({ key: rateLimitKey });
 			if (!success) {
 				return withCors(
@@ -456,13 +588,13 @@ export default {
 						updateTableStats(env), // Also update stats
 					]),
 				);
-				return withCors(new Response('Backfill initiated in background.', { status: 202 }), origin);
+				return withCors(Response.json({ message: 'Backfill initiated in background.' }, { status: 202 }), origin);
 			} else {
 				// Large backfill: synchronous (client waits, but guaranteed completion)
 				try {
 					await syncData(env, totalDays, offsetDays, resourceFilter);
 					await updateTableStats(env);
-					return withCors(new Response(`Backfill completed: ${totalDays} days synced.`, { status: 200 }), origin);
+					return withCors(Response.json({ message: `Backfill completed: ${totalDays} days synced.` }, { status: 200 }), origin);
 				} catch (err) {
 					return withCors(
 						Response.json(
@@ -535,7 +667,7 @@ export default {
 				// Validation: Read-only queries only
 				if (!isReadOnlySql(sql)) {
 					logSqlQuery(request, sql, params, Date.now() - queryStartTime, 0, 'Query blocked: not read-only');
-					return withCors(new Response('Only read-only SQL queries are allowed', { status: 400 }), origin);
+					return withCors(Response.json({ error: 'Only read-only SQL queries are allowed' }, { status: 400 }), origin);
 				}
 
 				// Validation: Parameter count limit
@@ -647,7 +779,7 @@ export default {
 		}
 
 		if (url.pathname === '/api/sql') {
-			return withCors(new Response('Method Not Allowed', { status: 405 }), origin);
+			return withCors(Response.json({ error: 'Method Not Allowed' }, { status: 405 }), origin);
 		}
 
 		// Dedicated endpoint for table statistics (fast, approximate counts)
@@ -727,7 +859,7 @@ export default {
 		}
 
 		// No matching endpoint
-		return withCors(new Response('Not Found', { status: 404 }), origin);
+		return withCors(Response.json({ error: 'Not Found' }, { status: 404 }), origin);
 	},
 };
 
@@ -803,12 +935,35 @@ async function syncData(env: Env, totalDays: number, offsetDays = 0, resourceFil
 
 function parseResourceFilter(raw: string | null): Set<string> | null {
 	if (!raw) return null;
+
+	// Validation: Limit resources parameter length to prevent abuse
+	if (raw.length > 500) {
+		console.warn('Resource filter too long, truncating', { length: raw.length });
+		raw = raw.slice(0, 500);
+	}
+
 	const parts = raw
 		.split(',')
 		.map((s) => s.trim())
 		.filter(Boolean);
-	if (!parts.length) return null;
-	return new Set(parts);
+
+	// Validation: Limit number of resources to prevent excessive filtering
+	if (parts.length > 20) {
+		console.warn('Too many resources specified, limiting to 20', { count: parts.length });
+		parts.length = 20;
+	}
+
+	// Validation: Only allow alphanumeric and underscore in resource names
+	const validParts = parts.filter((p) => /^[a-zA-Z0-9_]+$/.test(p));
+	if (validParts.length !== parts.length) {
+		console.warn('Invalid resource names filtered out', {
+			original: parts.length,
+			valid: validParts.length,
+		});
+	}
+
+	if (!validParts.length) return null;
+	return new Set(validParts);
 }
 
 function getChunkDaysForResource(r: OuraResource): number {
@@ -1193,9 +1348,13 @@ async function ingestResource(env: Env, r: OuraResource, window: { startDate: st
 
 	while (true) {
 		const url = buildOuraUrlForResource(r, window, nextToken);
-		const res = await fetchWithRetry(url, {
-			headers: { Authorization: `Bearer ${accessToken}` },
-		});
+		const res = await withCircuitBreaker(
+			() =>
+				fetchWithRetry(url, {
+					headers: { Authorization: `Bearer ${accessToken}` },
+				}),
+			`Oura API - ${r.resource}`,
+		);
 
 		if (!res.ok) {
 			const text = await res.text().catch(() => '');
@@ -1358,18 +1517,31 @@ function isReadOnlySql(sql: string): boolean {
 	// No multiple statements
 	if (normalized.includes(';')) return false;
 
-	// Block access to sensitive tables
-	const blockedTables = ['oura_oauth_tokens', 'oura_oauth_states'];
-	for (const table of blockedTables) {
-		if (new RegExp(`\\b${table}\\b`, 'i').test(normalized)) {
+	// Block access to sensitive tables using safe static regex patterns
+	// Use word boundaries to prevent substring matches while avoiding dynamic regex
+	const blockedTablePatterns = [/\boura_oauth_tokens\b/i, /\boura_oauth_states\b/i];
+	for (const pattern of blockedTablePatterns) {
+		if (pattern.test(normalized)) {
 			return false;
 		}
 	}
 
-	// Block any write operations
-	const writeOps = ['insert', 'update', 'delete', 'drop', 'alter', 'create', 'replace', 'vacuum', 'pragma', 'attach', 'detach'];
-	for (const op of writeOps) {
-		if (new RegExp(`\\b${op}\\b`).test(normalized)) {
+	// Block any write operations using safe static patterns
+	const writeOpPatterns = [
+		/\binsert\b/,
+		/\bupdate\b/,
+		/\bdelete\b/,
+		/\bdrop\b/,
+		/\balter\b/,
+		/\bcreate\b/,
+		/\breplace\b/,
+		/\bvacuum\b/,
+		/\bpragma\b/,
+		/\battach\b/,
+		/\bdetach\b/,
+	];
+	for (const pattern of writeOpPatterns) {
+		if (pattern.test(normalized)) {
 			return false;
 		}
 	}
