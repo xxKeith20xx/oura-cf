@@ -5,8 +5,7 @@ export interface Env {
 	UNAUTH_RATE_LIMITER: RateLimit; // New: Rate limiter for unauthenticated requests
 	OURA_CACHE: KVNamespace;
 	GRAFANA_SECRET: string;
-	GRAFANA_SECRET_2?: string; // Optional secondary token for rotation
-	GRAFANA_SECRET_3?: string; // Optional tertiary token for rotation
+	ADMIN_SECRET?: string; // Separate secret for manual admin operations (backfill, etc.)
 	OURA_CLIENT_ID?: string;
 	OURA_CLIENT_SECRET?: string;
 	OURA_SCOPES?: string;
@@ -90,11 +89,7 @@ async function constantTimeCompare(a: string, b: string): Promise<boolean> {
 
 // Security: Generate composite rate limit key to prevent collision behind proxies
 // Uses IP + token prefix hash to differentiate users behind same proxy
-async function getRateLimitKey(
-	clientIP: string,
-	authHeader: string | null,
-	type: 'auth' | 'unauth' | 'health' | 'backfill',
-): Promise<string> {
+async function getRateLimitKey(clientIP: string, authHeader: string | null, type: 'auth' | 'unauth' | 'health'): Promise<string> {
 	const baseKey = `${type}:${clientIP}`;
 
 	if (type === 'auth' && authHeader) {
@@ -120,10 +115,8 @@ async function validateBearerToken(authHeader: string | null, env: Env): Promise
 
 	const token = authHeader.substring(7); // Remove "Bearer " prefix
 
-	// Check all configured secrets (supports token rotation)
-	const secrets = [env.GRAFANA_SECRET, env.GRAFANA_SECRET_2, env.GRAFANA_SECRET_3].filter(
-		(s): s is string => typeof s === 'string' && s.length > 0,
-	);
+	// Check all configured secrets (Grafana service token + admin token)
+	const secrets = [env.GRAFANA_SECRET, env.ADMIN_SECRET].filter((s): s is string => typeof s === 'string' && s.length > 0);
 
 	for (const secret of secrets) {
 		if (await constantTimeCompare(token, secret)) {
@@ -177,6 +170,8 @@ function logSqlQuery(request: Request, sql: string, params: unknown[], execution
 const MAX_SQL_LENGTH = 10_000;
 const MAX_BACKFILL_DAYS = 3650;
 const OPENAPI_CACHE_TTL = 86400; // 24 hours
+const OURA_DOCS_URL = 'https://cloud.ouraring.com/v2/docs';
+const OURA_OPENAPI_FALLBACK_URL = 'https://cloud.ouraring.com/v2/static/json/openapi-1.28.json';
 const RESPONSE_CACHE_TTL = 300; // 5 minutes (use 'private' cache for authenticated endpoints)
 const DEFAULT_MAX_QUERY_ROWS = 50_000; // Default max rows for SQL queries
 const DEFAULT_QUERY_TIMEOUT_MS = 10_000; // Default query timeout (10 seconds)
@@ -397,7 +392,7 @@ export default {
 				Response.json({
 					status: 'ok',
 					timestamp: new Date().toISOString(),
-					version: '1.0.5',
+					version: '1.1.0',
 					request: {
 						headers: headers,
 						method: request.method,
@@ -554,11 +549,12 @@ export default {
 		}
 
 		if (url.pathname === '/backfill') {
-			// Rate limiting: prevent backfill spam (1 request per 60 seconds per IP)
-			const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
-			const rateLimitKey = await getRateLimitKey(clientIP, auth, 'backfill');
-			const { success } = await env.RATE_LIMITER.limit({ key: rateLimitKey });
-			if (!success) {
+			// Rate limit backfill: 1 request per 60 seconds per IP.
+			// Backfill is expensive (fans out to all Oura API endpoints + D1 writes),
+			// so this prevents accidental repeated triggers.
+			const rateLimitKey = await getRateLimitKey(clientIP, auth, 'health');
+			const { success: backfillRateOk } = await env.RATE_LIMITER.limit({ key: `backfill:${rateLimitKey}` });
+			if (!backfillRateOk) {
 				return withCors(
 					Response.json({ error: 'Rate limit exceeded. Please wait 60 seconds between backfill requests.' }, { status: 429 }),
 					origin,
@@ -818,6 +814,10 @@ export default {
 				SELECT 'heart_rate_samples', MIN(substr(timestamp,1,10)), MAX(substr(timestamp,1,10)), COUNT(*) FROM heart_rate_samples
 				UNION ALL
 				SELECT 'activity_logs', MIN(substr(start_datetime,1,10)), MAX(substr(start_datetime,1,10)), COUNT(*) FROM activity_logs
+				UNION ALL
+				SELECT 'enhanced_tags', MIN(start_day), MAX(start_day), COUNT(*) FROM enhanced_tags
+				UNION ALL
+				SELECT 'rest_mode_periods', MIN(start_day), MAX(start_day), COUNT(*) FROM rest_mode_periods
 			`,
 					)
 					.all();
@@ -973,9 +973,18 @@ function getChunkDaysForResource(r: OuraResource): number {
 	return 90;
 }
 
+// Normalize Oura resource names to handle renames/case changes across API versions.
+// e.g., 'vO2_max' (1.28) -> 'vo2_max' (what saveToD1 expects)
+const RESOURCE_ALIASES: Record<string, string> = {
+	vO2_max: 'vo2_max',
+};
+
 async function saveToD1(env: Env, endpoint: string, data: any[]) {
+	// Normalize endpoint name to handle API version renames
+	const normalizedEndpoint = RESOURCE_ALIASES[endpoint] ?? endpoint;
+
 	// daily_readiness -> daily_summaries (readiness fields)
-	if (endpoint === 'daily_readiness') {
+	if (normalizedEndpoint === 'daily_readiness') {
 		const stmt = env.oura_db.prepare(
 			`INSERT INTO daily_summaries (day, readiness_score, readiness_activity_balance, readiness_body_temperature, readiness_hrv_balance, readiness_previous_day_activity, readiness_previous_night_sleep, readiness_recovery_index, readiness_resting_heart_rate, readiness_sleep_balance, updated_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
@@ -1013,7 +1022,7 @@ async function saveToD1(env: Env, endpoint: string, data: any[]) {
 	}
 
 	// daily_sleep -> daily_summaries (sleep fields)
-	if (endpoint === 'daily_sleep') {
+	if (normalizedEndpoint === 'daily_sleep') {
 		const stmt = env.oura_db.prepare(
 			`INSERT INTO daily_summaries (day, sleep_score, sleep_deep_sleep, sleep_efficiency, sleep_latency, sleep_rem_sleep, sleep_restfulness, sleep_timing, sleep_total_sleep, updated_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
@@ -1049,7 +1058,7 @@ async function saveToD1(env: Env, endpoint: string, data: any[]) {
 	}
 
 	// daily_activity -> daily_summaries (activity fields)
-	if (endpoint === 'daily_activity') {
+	if (normalizedEndpoint === 'daily_activity') {
 		const stmt = env.oura_db.prepare(
 			`INSERT INTO daily_summaries (day, activity_score, activity_steps, activity_active_calories, activity_total_calories, activity_meet_daily_targets, activity_move_every_hour, activity_recovery_time, activity_stay_active, activity_training_frequency, activity_training_volume, updated_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
@@ -1089,7 +1098,7 @@ async function saveToD1(env: Env, endpoint: string, data: any[]) {
 	}
 
 	// daily_stress -> daily_summaries (stress_index)
-	if (endpoint === 'daily_stress') {
+	if (normalizedEndpoint === 'daily_stress') {
 		const stmt = env.oura_db.prepare(
 			`INSERT INTO daily_summaries (day, stress_index, updated_at)
 			VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
@@ -1105,7 +1114,7 @@ async function saveToD1(env: Env, endpoint: string, data: any[]) {
 	}
 
 	// daily_resilience -> daily_summaries (resilience fields)
-	if (endpoint === 'daily_resilience') {
+	if (normalizedEndpoint === 'daily_resilience') {
 		const stmt = env.oura_db.prepare(
 			`INSERT INTO daily_summaries (day, resilience_level, resilience_contributors_sleep, resilience_contributors_stress, updated_at)
 			VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
@@ -1124,7 +1133,7 @@ async function saveToD1(env: Env, endpoint: string, data: any[]) {
 	}
 
 	// daily_spo2 -> daily_summaries (spo2 fields)
-	if (endpoint === 'daily_spo2') {
+	if (normalizedEndpoint === 'daily_spo2') {
 		const stmt = env.oura_db.prepare(
 			`INSERT INTO daily_summaries (day, spo2_percentage, spo2_breathing_disturbance_index, updated_at)
 			VALUES (?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
@@ -1141,7 +1150,7 @@ async function saveToD1(env: Env, endpoint: string, data: any[]) {
 	}
 
 	// daily_cardiovascular_age -> daily_summaries (cv_age_offset)
-	if (endpoint === 'daily_cardiovascular_age') {
+	if (normalizedEndpoint === 'daily_cardiovascular_age') {
 		const stmt = env.oura_db.prepare(
 			`INSERT INTO daily_summaries (day, cv_age_offset, updated_at)
 			VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
@@ -1157,7 +1166,9 @@ async function saveToD1(env: Env, endpoint: string, data: any[]) {
 	}
 
 	// vo2_max -> daily_summaries (vo2_max)
-	if (endpoint === 'vo2_max') {
+	// Note: Oura API renamed this from 'vo2_max' to 'vO2_max' in spec 1.28
+	// RESOURCE_ALIASES normalizes it back to 'vo2_max'
+	if (normalizedEndpoint === 'vo2_max') {
 		const stmt = env.oura_db.prepare(
 			`INSERT INTO daily_summaries (day, vo2_max, updated_at)
 			VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
@@ -1173,7 +1184,7 @@ async function saveToD1(env: Env, endpoint: string, data: any[]) {
 	}
 
 	// sleep -> sleep_episodes
-	if (endpoint === 'sleep') {
+	if (normalizedEndpoint === 'sleep') {
 		const stmt = env.oura_db.prepare(
 			`INSERT INTO sleep_episodes (id, day, start_datetime, end_datetime, type, heart_rate_avg, heart_rate_lowest, hrv_avg, breath_avg, temperature_deviation, deep_duration, rem_duration, light_duration, awake_duration)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -1217,7 +1228,7 @@ async function saveToD1(env: Env, endpoint: string, data: any[]) {
 	}
 
 	// heartrate -> heart_rate_samples
-	if (endpoint === 'heartrate') {
+	if (normalizedEndpoint === 'heartrate') {
 		const stmt = env.oura_db.prepare(
 			'INSERT INTO heart_rate_samples (timestamp, bpm, source) VALUES (?, ?, ?) ' +
 				'ON CONFLICT(timestamp) DO UPDATE SET bpm=excluded.bpm, source=excluded.source',
@@ -1243,7 +1254,7 @@ async function saveToD1(env: Env, endpoint: string, data: any[]) {
 	}
 
 	// workout -> activity_logs
-	if (endpoint === 'workout') {
+	if (normalizedEndpoint === 'workout') {
 		const stmt = env.oura_db.prepare(
 			`INSERT INTO activity_logs (id, type, start_datetime, end_datetime, activity_label, intensity, calories, distance, hr_avg)
 			VALUES (?, 'workout', ?, ?, ?, ?, ?, ?, ?)
@@ -1275,7 +1286,7 @@ async function saveToD1(env: Env, endpoint: string, data: any[]) {
 	}
 
 	// session -> activity_logs (meditation/breathing sessions)
-	if (endpoint === 'session') {
+	if (normalizedEndpoint === 'session') {
 		const stmt = env.oura_db.prepare(
 			`INSERT INTO activity_logs (id, type, start_datetime, end_datetime, activity_label, hr_avg, mood)
 			VALUES (?, 'session', ?, ?, ?, ?, ?)
@@ -1296,7 +1307,7 @@ async function saveToD1(env: Env, endpoint: string, data: any[]) {
 	}
 
 	// tag -> user_tags
-	if (endpoint === 'tag') {
+	if (normalizedEndpoint === 'tag') {
 		const stmt = env.oura_db.prepare(
 			`INSERT INTO user_tags (id, day, tag_type, comment)
 			VALUES (?, ?, ?, ?)
@@ -1308,6 +1319,81 @@ async function saveToD1(env: Env, endpoint: string, data: any[]) {
 		const stmts = [];
 		for (const d of data) {
 			stmts.push(stmt.bind(d.id, d.day ?? null, d.tag_type_code ?? d.tags?.[0] ?? null, d.comment ?? null));
+		}
+		if (stmts.length) await env.oura_db.batch(stmts);
+	}
+
+	// enhanced_tag -> enhanced_tags (richer tag model with duration + custom names)
+	if (normalizedEndpoint === 'enhanced_tag') {
+		const stmt = env.oura_db.prepare(
+			`INSERT INTO enhanced_tags (id, start_day, end_day, start_time, end_time, tag_type_code, custom_name, comment)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(id) DO UPDATE SET
+				start_day=excluded.start_day,
+				end_day=excluded.end_day,
+				start_time=excluded.start_time,
+				end_time=excluded.end_time,
+				tag_type_code=excluded.tag_type_code,
+				custom_name=excluded.custom_name,
+				comment=excluded.comment`,
+		);
+		const stmts = [];
+		for (const d of data) {
+			stmts.push(
+				stmt.bind(
+					d.id,
+					d.start_day ?? null,
+					d.end_day ?? null,
+					d.start_time ?? null,
+					d.end_time ?? null,
+					d.tag_type_code ?? null,
+					d.custom_name ?? null,
+					d.comment ?? null,
+				),
+			);
+		}
+		if (stmts.length) await env.oura_db.batch(stmts);
+	}
+
+	// rest_mode_period -> rest_mode_periods
+	if (normalizedEndpoint === 'rest_mode_period') {
+		const stmt = env.oura_db.prepare(
+			`INSERT INTO rest_mode_periods (id, start_day, end_day, start_time, end_time, episodes_json)
+			VALUES (?, ?, ?, ?, ?, ?)
+			ON CONFLICT(id) DO UPDATE SET
+				start_day=excluded.start_day,
+				end_day=excluded.end_day,
+				start_time=excluded.start_time,
+				end_time=excluded.end_time,
+				episodes_json=excluded.episodes_json`,
+		);
+		const stmts = [];
+		for (const d of data) {
+			const episodesJson = Array.isArray(d.episodes) ? JSON.stringify(d.episodes) : null;
+			stmts.push(stmt.bind(d.id, d.start_day ?? null, d.end_day ?? null, d.start_time ?? null, d.end_time ?? null, episodesJson));
+		}
+		if (stmts.length) await env.oura_db.batch(stmts);
+	}
+
+	// sleep_time -> daily_summaries (sleep timing recommendation columns)
+	if (normalizedEndpoint === 'sleep_time') {
+		const stmt = env.oura_db.prepare(
+			`INSERT INTO daily_summaries (day, sleep_time_optimal_bedtime, sleep_time_recommendation, sleep_time_status, updated_at)
+			VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+			ON CONFLICT(day) DO UPDATE SET
+				sleep_time_optimal_bedtime=excluded.sleep_time_optimal_bedtime,
+				sleep_time_recommendation=excluded.sleep_time_recommendation,
+				sleep_time_status=excluded.sleep_time_status,
+				updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
+		);
+		const stmts = [];
+		for (const d of data) {
+			// optimal_bedtime can be an object with start/end fields or a string
+			const bedtime =
+				typeof d.optimal_bedtime === 'object' && d.optimal_bedtime !== null
+					? JSON.stringify(d.optimal_bedtime)
+					: (d.optimal_bedtime ?? null);
+			stmts.push(stmt.bind(d.day, bedtime, d.recommendation ?? null, d.status ?? null));
 		}
 		if (stmts.length) await env.oura_db.batch(stmts);
 	}
@@ -1342,9 +1428,9 @@ async function ingestResource(env: Env, r: OuraResource, window: { startDate: st
 			timestamp: new Date().toISOString(),
 			resource: r.resource,
 		});
-		return null;
+		// Re-throw so syncData sees this as a failed resource instead of silent success
+		throw new Error(`Token acquisition failed for ${r.resource}: ${err instanceof Error ? err.message : String(err)}`);
 	});
-	if (!accessToken) return;
 
 	while (true) {
 		const url = buildOuraUrlForResource(r, window, nextToken);
@@ -1431,6 +1517,43 @@ async function fetchWithRetry(input: RequestInfo | URL, init: RequestInit, maxRe
 	}
 }
 
+// Discover the current OpenAPI spec URL from the Oura docs page.
+// Falls back to OURA_OPENAPI_FALLBACK_URL if discovery fails.
+async function discoverOpenApiSpecUrl(): Promise<string> {
+	try {
+		const res = await fetch(OURA_DOCS_URL);
+		if (!res.ok) {
+			console.warn('Oura docs page returned non-200, using fallback spec URL', {
+				status: res.status,
+				timestamp: new Date().toISOString(),
+			});
+			return OURA_OPENAPI_FALLBACK_URL;
+		}
+		const html = await res.text();
+		// Parse spec-url from: <redoc spec-url="/v2/static/json/openapi-X.YZ.json">
+		const match = html.match(/spec-url=["']([^"']+)["']/);
+		if (match?.[1]) {
+			const specPath = match[1];
+			const specUrl = specPath.startsWith('http') ? specPath : `https://cloud.ouraring.com${specPath}`;
+			console.log('Discovered OpenAPI spec URL from docs page', {
+				specUrl,
+				timestamp: new Date().toISOString(),
+			});
+			return specUrl;
+		}
+		console.warn('Could not parse spec-url from Oura docs page, using fallback', {
+			timestamp: new Date().toISOString(),
+		});
+		return OURA_OPENAPI_FALLBACK_URL;
+	} catch (err) {
+		console.warn('Failed to fetch Oura docs page for spec discovery, using fallback', {
+			error: err instanceof Error ? err.message : String(err),
+			timestamp: new Date().toISOString(),
+		});
+		return OURA_OPENAPI_FALLBACK_URL;
+	}
+}
+
 async function loadOuraResourcesFromOpenApi(env: Env): Promise<OuraResource[]> {
 	// Try KV cache first (24 hour TTL)
 	try {
@@ -1445,14 +1568,17 @@ async function loadOuraResourcesFromOpenApi(env: Env): Promise<OuraResource[]> {
 		});
 	}
 
-	// Fetch and parse OpenAPI spec
-	const res = await fetch('https://cloud.ouraring.com/v2/static/json/openapi-1.27.json');
+	// Dynamically discover the current spec URL (resilient to version bumps)
+	const specUrl = await discoverOpenApiSpecUrl();
+
+	const res = await fetch(specUrl);
 	if (!res.ok) {
 		console.error('Failed to fetch Oura OpenAPI spec', {
+			specUrl,
 			status: res.status,
 			statusText: res.statusText,
 			timestamp: new Date().toISOString(),
-			message: 'Unable to load Oura API resource definitions',
+			message: 'Unable to load Oura API resource definitions. The spec URL may have changed.',
 		});
 		return [];
 	}
@@ -1491,6 +1617,13 @@ async function loadOuraResourcesFromOpenApi(env: Env): Promise<OuraResource[]> {
 	}
 
 	out.sort((a, b) => a.resource.localeCompare(b.resource));
+
+	console.log('Loaded Oura API resources from OpenAPI spec', {
+		specUrl,
+		resourceCount: out.length,
+		resources: out.map((r) => r.resource),
+		timestamp: new Date().toISOString(),
+	});
 
 	// Cache in KV for 24 hours
 	try {
@@ -1768,6 +1901,14 @@ async function updateTableStats(env: Env): Promise<void> {
 			{
 				resource: 'activity_logs',
 				query: `SELECT 'activity_logs' AS resource, MIN(substr(start_datetime,1,10)) AS min_day, MAX(substr(start_datetime,1,10)) AS max_day, COUNT(*) AS record_count FROM activity_logs`,
+			},
+			{
+				resource: 'enhanced_tags',
+				query: `SELECT 'enhanced_tags' AS resource, MIN(start_day) AS min_day, MAX(start_day) AS max_day, COUNT(*) AS record_count FROM enhanced_tags`,
+			},
+			{
+				resource: 'rest_mode_periods',
+				query: `SELECT 'rest_mode_periods' AS resource, MIN(start_day) AS min_day, MAX(start_day) AS max_day, COUNT(*) AS record_count FROM rest_mode_periods`,
 			},
 		];
 

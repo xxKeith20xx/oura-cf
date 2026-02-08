@@ -10,7 +10,7 @@ describe('Health Endpoint', () => {
 		const data = (await response.json()) as any;
 		expect(data).toMatchObject({
 			status: 'ok',
-			version: '1.0.5',
+			version: '1.1.0',
 		});
 		expect(data.timestamp).toBeDefined();
 		expect(data.request).toBeDefined();

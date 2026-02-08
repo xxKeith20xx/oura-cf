@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-02-08
+
+### Added
+
+- **New Oura API v1.28 Endpoints**: Support for 3 new data sources
+  - `enhanced_tag` → `enhanced_tags` table (richer tags with duration, custom names)
+  - `rest_mode_period` → `rest_mode_periods` table (rest mode tracking with episodes)
+  - `sleep_time` → `daily_summaries` columns (optimal bedtime, recommendation, status)
+- **Dynamic OpenAPI Spec Discovery**: Worker now auto-discovers the current Oura API spec URL
+  - Fetches `https://cloud.ouraring.com/v2/docs` and parses the `<redoc spec-url>` attribute
+  - Falls back to hardcoded URL if discovery fails
+  - Resilient to future Oura API version bumps without code changes
+- **Resource Alias System**: `RESOURCE_ALIASES` map handles Oura API renames across versions
+  - `vO2_max` (v1.28) automatically normalized to `vo2_max` for D1 storage
+- **Admin Secret**: Separate `ADMIN_SECRET` for manual operations (backfill, etc.)
+  - Decoupled from `GRAFANA_SECRET` which is managed by Grafana's service token
+- **Database Migration**: `0006_new_endpoints.sql`
+  - `enhanced_tags` table with index on `start_day`
+  - `rest_mode_periods` table with index on `start_day`
+  - 3 new columns on `daily_summaries`: `sleep_time_optimal_bedtime`, `sleep_time_recommendation`, `sleep_time_status`
+- **Grafana Dashboard**: 8 new panels across 3 sections (46 → 54 panels, 9 → 10 rows)
+  - Sleep Deep Dive: Bedtime Recommendation, Sleep Timing Status, Optimal Bedtime
+  - Stress & Recovery: Rest Mode Periods table, Rest Mode Activations stat
+  - Tags & Annotations (new row): Recent Tags table, Tag Types pie chart, Tags per Month timeseries
+- **Table Stats**: `enhanced_tags` and `rest_mode_periods` added to `/api/stats` and `updateTableStats()`
+
+### Fixed
+
+- **Critical: OpenAPI Spec URL 404**: Oura updated their API spec from v1.27 to v1.28, breaking the hardcoded URL
+  - `loadOuraResourcesFromOpenApi()` returned empty array, causing all cron syncs to silently do nothing
+  - Dynamic discovery prevents this class of failure from recurring
+- **Silent Sync Failures**: `ingestResource()` no longer swallows token acquisition errors
+  - Previously returned silently on auth failure; now re-throws so `syncData()` reports it as a failed resource
+
+### Changed
+
+- **Auth Simplification**: Removed unused `GRAFANA_SECRET_2` and `GRAFANA_SECRET_3` token rotation
+  - Auth now checks `GRAFANA_SECRET` + `ADMIN_SECRET` only
+- **Backfill Rate Limit**: Restored dedicated 1 req/60s rate limit for `/backfill` endpoint
+  - Uses `RATE_LIMITER` with `backfill:` key prefix (independent from `/health` bucket)
+- **`saveToD1()`**: All endpoint matching now uses `normalizedEndpoint` via `RESOURCE_ALIASES`
+
 ## [1.0.5] - 2026-02-07
 
 ### Fixed
@@ -209,6 +251,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Security review documentation
 - Performance optimization guides
 
+[1.1.0]: https://github.com/xxKeith20xx/oura-cf/compare/v1.0.5...v1.1.0
+[1.0.5]: https://github.com/xxKeith20xx/oura-cf/compare/v1.0.4...v1.0.5
+[1.0.4]: https://github.com/xxKeith20xx/oura-cf/compare/v1.0.3...v1.0.4
+[1.0.3]: https://github.com/xxKeith20xx/oura-cf/compare/v1.0.1...v1.0.3
 [1.0.1]: https://github.com/xxKeith20xx/oura-cf/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/xxKeith20xx/oura-cf/compare/v0.0.0...v1.0.0
 [0.0.0]: https://github.com/xxKeith20xx/oura-cf/releases/tag/v0.0.0

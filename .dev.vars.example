@@ -3,12 +3,11 @@
 # Or set as environment variable: export CLOUDFLARE_ACCOUNT_ID="your-account-id"
 CLOUDFLARE_ACCOUNT_ID=
 
-# Grafana API authentication token (primary)
+# Grafana API authentication token (used by Grafana Infinity datasource)
 GRAFANA_SECRET=
 
-# Optional: Additional tokens for zero-downtime rotation
-# GRAFANA_SECRET_2=
-# GRAFANA_SECRET_3=
+# Admin secret for manual operations (backfill, etc.)
+ADMIN_SECRET=
 
 # Oura OAuth credentials (optional, only if using OAuth flow)
 OURA_CLIENT_ID=
