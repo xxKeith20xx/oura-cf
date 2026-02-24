@@ -5,6 +5,49 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-02-24
+
+### Performance
+
+- **O(1) Index Lookups in `updateTableStats()`**: Removed `substr()` from `MIN()`/`MAX()` on `heart_rate_samples.timestamp` and `activity_logs.start_datetime` — SQLite now uses B-tree index lookups instead of full table scans. Date truncation moved to JS `.substring(0, 10)`.
+- **Parallel Stat Queries**: `updateTableStats()` now runs all stat queries with `Promise.allSettled()` instead of sequentially, with per-table error logging for rejected queries.
+- **LIMIT Injection on `/api/sql`**: Injects `LIMIT maxRows+1` when absent, caps user-provided LIMIT when it exceeds `maxRows`. Strips trailing SQL comments (`--` and `/* */`) before LIMIT detection to prevent bypass. Uses positional replacement to avoid matching LIMIT in subqueries.
+- **Bounded Root Endpoint**: `/` now defaults to 90 days with parameterized `?days=N` (max 3650) instead of unbounded `SELECT *`.
+- **Bounded `/api/daily_summaries`**: Defaults to 90-day range when no `start` param provided.
+- **Fallback Stats Query Optimization**: Same `substr()` removal in the UNION ALL fallback at `/api/stats`, with JS-side date truncation.
+
+### Added
+
+- **Database Migration `0007_optimize_indexes.sql`**:
+  - Drop redundant PK-duplicate indexes (`idx_daily_summaries_day`, `idx_heart_rate_samples_timestamp`)
+  - Drop indexes on unused `oura_raw_documents` table
+  - Add `idx_user_tags_day` index
+- **Grafana Dashboard — New Panels**:
+  - Awake Duration (min) — sleep_episodes awake time
+  - SpO2 % Over Time — blood oxygen saturation trend
+  - Cardiovascular Age Offset — CV age trend over time
+  - Resilience Level — daily resilience mapped 1–4 as points
+  - Daily HR Range (samples) — daily min/avg/max BPM from heart_rate_samples (90d)
+  - HR by Source (daily avg) — avg BPM by source: awake/rest/sleep/etc (90d)
+- **Heart Rate Samples row** — new collapsed dashboard section for intraday HR data
+
+### Fixed
+
+- **Grafana Dashboard — 7 panels with 90-day range**: Panels 1104, 1104b, 1211, 1306, 1805, 1806, 1807 changed from `date('now', '-90 days')` to `date('now', '-2 years')` to match the rest of the dashboard.
+- **Orphaned stat panels**: Panels 1007–1010 (Stress Index, Resilience, SpO2 %, CV Age Offset) were missing from layout; restored to Snapshot row.
+
+### Removed
+
+- **Grafana Dashboard — Panels with no data**: Removed 6 panels where the underlying Oura API returns NULL for all rows:
+  - VO2 Max (stat + time-series)
+  - Bedtime Recommendation, Sleep Timing Status, Optimal Bedtime (stats)
+  - Workout Avg HR (time-series)
+
+### Changed
+
+- **Wrangler**: Bumped from ^4.63.0 to ^4.68.0
+- **Dashboard total**: 54 → 56 panels, 10 → 11 rows
+
 ## [1.1.0] - 2026-02-08
 
 ### Added
