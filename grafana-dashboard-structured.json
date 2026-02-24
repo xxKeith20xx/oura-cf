@@ -116,7 +116,9 @@
 							"minVizWidth": 75,
 							"orientation": "auto",
 							"reduceOptions": {
-								"calcs": ["lastNotNull"],
+								"calcs": [
+									"lastNotNull"
+								],
 								"fields": "",
 								"values": false
 							},
@@ -227,7 +229,9 @@
 							"minVizWidth": 75,
 							"orientation": "auto",
 							"reduceOptions": {
-								"calcs": ["lastNotNull"],
+								"calcs": [
+									"lastNotNull"
+								],
 								"fields": "",
 								"values": false
 							},
@@ -338,7 +342,9 @@
 							"minVizWidth": 75,
 							"orientation": "auto",
 							"reduceOptions": {
-								"calcs": ["lastNotNull"],
+								"calcs": [
+									"lastNotNull"
+								],
 								"fields": "",
 								"values": false
 							},
@@ -439,7 +445,9 @@
 							"orientation": "auto",
 							"percentChangeColorMode": "standard",
 							"reduceOptions": {
-								"calcs": ["lastNotNull"],
+								"calcs": [
+									"lastNotNull"
+								],
 								"fields": "",
 								"values": false
 							},
@@ -538,7 +546,9 @@
 							"orientation": "auto",
 							"percentChangeColorMode": "standard",
 							"reduceOptions": {
-								"calcs": ["lastNotNull"],
+								"calcs": [
+									"lastNotNull"
+								],
 								"fields": "",
 								"values": false
 							},
@@ -637,7 +647,9 @@
 							"orientation": "auto",
 							"percentChangeColorMode": "standard",
 							"reduceOptions": {
-								"calcs": ["lastNotNull"],
+								"calcs": [
+									"lastNotNull"
+								],
 								"fields": "",
 								"values": false
 							},
@@ -3068,7 +3080,9 @@
 							},
 							"pieType": "donut",
 							"reduceOptions": {
-								"calcs": ["lastNotNull"],
+								"calcs": [
+									"lastNotNull"
+								],
 								"fields": "",
 								"values": false
 							},
@@ -3165,7 +3179,9 @@
 							"orientation": "auto",
 							"percentChangeColorMode": "standard",
 							"reduceOptions": {
-								"calcs": ["lastNotNull"],
+								"calcs": [
+									"lastNotNull"
+								],
 								"fields": "",
 								"values": false
 							},
@@ -3261,7 +3277,9 @@
 							"orientation": "auto",
 							"percentChangeColorMode": "standard",
 							"reduceOptions": {
-								"calcs": ["lastNotNull"],
+								"calcs": [
+									"lastNotNull"
+								],
 								"fields": "",
 								"values": false
 							},
@@ -4143,7 +4161,9 @@
 							"orientation": "auto",
 							"percentChangeColorMode": "standard",
 							"reduceOptions": {
-								"calcs": ["lastNotNull"],
+								"calcs": [
+									"lastNotNull"
+								],
 								"fields": "",
 								"values": false
 							},
@@ -4239,7 +4259,9 @@
 							"orientation": "auto",
 							"percentChangeColorMode": "standard",
 							"reduceOptions": {
-								"calcs": ["lastNotNull"],
+								"calcs": [
+									"lastNotNull"
+								],
 								"fields": "",
 								"values": false
 							},
@@ -4335,7 +4357,9 @@
 							"orientation": "auto",
 							"percentChangeColorMode": "standard",
 							"reduceOptions": {
-								"calcs": ["lastNotNull"],
+								"calcs": [
+									"lastNotNull"
+								],
 								"fields": "",
 								"values": false
 							},
@@ -4431,103 +4455,9 @@
 							"orientation": "auto",
 							"percentChangeColorMode": "standard",
 							"reduceOptions": {
-								"calcs": ["lastNotNull"],
-								"fields": "",
-								"values": false
-							},
-							"showPercentChange": false,
-							"textMode": "auto",
-							"wideLayout": true
-						}
-					},
-					"version": "12.4.0-21024277089.patch2"
-				}
-			}
-		},
-		"panel-1011": {
-			"kind": "Panel",
-			"spec": {
-				"data": {
-					"kind": "QueryGroup",
-					"spec": {
-						"queries": [
-							{
-								"kind": "PanelQuery",
-								"spec": {
-									"hidden": false,
-									"query": {
-										"datasource": {
-											"name": "ff8a5nfbpai9sc"
-										},
-										"group": "yesoreyeram-infinity-datasource",
-										"kind": "DataQuery",
-										"spec": {
-											"columns": [
-												{
-													"selector": "value",
-													"text": "value",
-													"type": "number"
-												}
-											],
-											"format": "table",
-											"parser": "backend",
-											"root_selector": "results",
-											"source": "url",
-											"type": "json",
-											"url": "https://oura.keith20.dev/api/sql",
-											"url_options": {
-												"body_content_type": "application/json",
-												"body_type": "raw",
-												"data": "{\"sql\": \"SELECT vo2_max AS value FROM daily_summaries WHERE vo2_max IS NOT NULL ORDER BY day DESC LIMIT 1\", \"params\": []}",
-												"method": "POST"
-											}
-										},
-										"version": "v0"
-									},
-									"refId": "A"
-								}
-							}
-						],
-						"queryOptions": {},
-						"transformations": []
-					}
-				},
-				"description": "Maximum oxygen consumption during exercise. Higher values indicate better cardiovascular fitness. Measured in ml/kg/min.",
-				"id": 1011,
-				"links": [],
-				"title": "VO2 Max",
-				"vizConfig": {
-					"group": "stat",
-					"kind": "VizConfig",
-					"spec": {
-						"fieldConfig": {
-							"defaults": {
-								"thresholds": {
-									"mode": "absolute",
-									"steps": [
-										{
-											"color": "green",
-											"value": 0
-										},
-										{
-											"color": "red",
-											"value": 80
-										}
-									]
-								},
-								"unit": "short",
-								"decimals": 1
-							},
-							"overrides": []
-						},
-						"options": {
-							"colorMode": "value",
-							"graphMode": "area",
-							"justifyMode": "auto",
-							"orientation": "auto",
-							"percentChangeColorMode": "standard",
-							"reduceOptions": {
-								"calcs": ["lastNotNull"],
+								"calcs": [
+									"lastNotNull"
+								],
 								"fields": "",
 								"values": false
 							},
@@ -4614,7 +4544,7 @@
 											"url_options": {
 												"body_content_type": "application/json",
 												"body_type": "raw",
-												"data": "{\"sql\": \"SELECT \\n            day||'T00:00:00Z' AS time,\\n            readiness_activity_balance AS activity_balance,\\n            readiness_body_temperature AS body_temp,\\n            readiness_hrv_balance AS hrv_balance,\\n            readiness_previous_day_activity AS prev_day_activity,\\n            readiness_previous_night_sleep AS prev_night,\\n            readiness_recovery_index AS recovery_index,\\n            readiness_resting_heart_rate AS resting_hr,\\n            readiness_sleep_balance AS sleep_balance\\n        FROM daily_summaries \\n        WHERE day >= date('now', '-90 days') \\n        ORDER BY day\", \"params\": []}",
+												"data": "{\"sql\": \"SELECT \\n            day||'T00:00:00Z' AS time,\\n            readiness_activity_balance AS activity_balance,\\n            readiness_body_temperature AS body_temp,\\n            readiness_hrv_balance AS hrv_balance,\\n            readiness_previous_day_activity AS prev_day_activity,\\n            readiness_previous_night_sleep AS prev_night,\\n            readiness_recovery_index AS recovery_index,\\n            readiness_resting_heart_rate AS resting_hr,\\n            readiness_sleep_balance AS sleep_balance\\n        FROM daily_summaries \\n        WHERE day >= date('now', '-2 years') \\n        ORDER BY day\", \"params\": []}",
 												"method": "POST"
 											}
 										},
@@ -4780,7 +4710,7 @@
 											"url_options": {
 												"body_content_type": "application/json",
 												"body_type": "raw",
-												"data": "{\"sql\": \"SELECT \\n            day||'T00:00:00Z' AS time,\\n            sleep_deep_sleep AS deep_sleep,\\n            sleep_efficiency AS efficiency,\\n            sleep_latency AS latency,\\n            sleep_rem_sleep AS rem_sleep,\\n            sleep_restfulness AS restfulness,\\n            sleep_timing AS timing,\\n            sleep_total_sleep AS total_sleep\\n        FROM daily_summaries \\n        WHERE day >= date('now', '-90 days') \\n        ORDER BY day\", \"params\": []}",
+												"data": "{\"sql\": \"SELECT \\n            day||'T00:00:00Z' AS time,\\n            sleep_deep_sleep AS deep_sleep,\\n            sleep_efficiency AS efficiency,\\n            sleep_latency AS latency,\\n            sleep_rem_sleep AS rem_sleep,\\n            sleep_restfulness AS restfulness,\\n            sleep_timing AS timing,\\n            sleep_total_sleep AS total_sleep\\n        FROM daily_summaries \\n        WHERE day >= date('now', '-2 years') \\n        ORDER BY day\", \"params\": []}",
 												"method": "POST"
 											}
 										},
@@ -4941,7 +4871,7 @@
 											"url_options": {
 												"body_content_type": "application/json",
 												"body_type": "raw",
-												"data": "{\"sql\": \"SELECT \\n            day||'T00:00:00Z' AS time,\\n            activity_meet_daily_targets AS meet_targets,\\n            activity_move_every_hour AS move_hourly,\\n            activity_recovery_time AS recovery_time,\\n            activity_stay_active AS stay_active,\\n            activity_training_frequency AS train_freq,\\n            activity_training_volume AS train_vol\\n        FROM daily_summaries \\n        WHERE day >= date('now', '-90 days') \\n        ORDER BY day\", \"params\": []}",
+												"data": "{\"sql\": \"SELECT \\n            day||'T00:00:00Z' AS time,\\n            activity_meet_daily_targets AS meet_targets,\\n            activity_move_every_hour AS move_hourly,\\n            activity_recovery_time AS recovery_time,\\n            activity_stay_active AS stay_active,\\n            activity_training_frequency AS train_freq,\\n            activity_training_volume AS train_vol\\n        FROM daily_summaries \\n        WHERE day >= date('now', '-2 years') \\n        ORDER BY day\", \"params\": []}",
 												"method": "POST"
 											}
 										},
@@ -5124,7 +5054,9 @@
 							"orientation": "auto",
 							"percentChangeColorMode": "standard",
 							"reduceOptions": {
-								"calcs": ["lastNotNull"],
+								"calcs": [
+									"lastNotNull"
+								],
 								"fields": "",
 								"values": false
 							},
@@ -5176,7 +5108,7 @@
 											"url_options": {
 												"body_content_type": "application/json",
 												"body_type": "raw",
-												"data": "{\"sql\": \"SELECT \\n            day||'T00:00:00Z' AS time,\\n            spo2_breathing_disturbance_index AS value\\n        FROM daily_summaries \\n        WHERE spo2_breathing_disturbance_index IS NOT NULL \\n            AND day >= date('now', '-90 days') \\n        ORDER BY day\", \"params\": []}",
+												"data": "{\"sql\": \"SELECT \\n            day||'T00:00:00Z' AS time,\\n            spo2_breathing_disturbance_index AS value\\n        FROM daily_summaries \\n        WHERE spo2_breathing_disturbance_index IS NOT NULL \\n            AND day >= date('now', '-2 years') \\n        ORDER BY day\", \"params\": []}",
 												"method": "POST"
 											}
 										},
@@ -5317,7 +5249,7 @@
 											"url_options": {
 												"body_content_type": "application/json",
 												"body_type": "raw",
-												"data": "{\"sql\": \"SELECT \\n            day||'T00:00:00Z' AS time,\\n            stress_index AS stress,\\n            readiness_hrv_balance AS hrv\\n        FROM daily_summaries \\n        WHERE stress_index IS NOT NULL \\n            AND readiness_hrv_balance IS NOT NULL\\n            AND day >= date('now', '-90 days')\\n        ORDER BY day\", \"params\": []}",
+												"data": "{\"sql\": \"SELECT \\n            day||'T00:00:00Z' AS time,\\n            stress_index AS stress,\\n            readiness_hrv_balance AS hrv\\n        FROM daily_summaries \\n        WHERE stress_index IS NOT NULL \\n            AND readiness_hrv_balance IS NOT NULL\\n            AND day >= date('now', '-2 years')\\n        ORDER BY day\", \"params\": []}",
 												"method": "POST"
 											}
 										},
@@ -5392,7 +5324,10 @@
 						},
 						"options": {
 							"legend": {
-								"calcs": ["mean", "lastNotNull"],
+								"calcs": [
+									"mean",
+									"lastNotNull"
+								],
 								"displayMode": "table",
 								"placement": "bottom",
 								"showLegend": true
@@ -5452,7 +5387,7 @@
 											"url_options": {
 												"body_content_type": "application/json",
 												"body_type": "raw",
-												"data": "{\"sql\": \"SELECT \\n            day||'T00:00:00Z' AS time,\\n            activity_training_volume AS training,\\n            readiness_score AS readiness\\n        FROM daily_summaries \\n        WHERE activity_training_volume IS NOT NULL \\n            AND readiness_score IS NOT NULL\\n            AND day >= date('now', '-90 days')\\n        ORDER BY day\", \"params\": []}",
+												"data": "{\"sql\": \"SELECT \\n            day||'T00:00:00Z' AS time,\\n            activity_training_volume AS training,\\n            readiness_score AS readiness\\n        FROM daily_summaries \\n        WHERE activity_training_volume IS NOT NULL \\n            AND readiness_score IS NOT NULL\\n            AND day >= date('now', '-2 years')\\n        ORDER BY day\", \"params\": []}",
 												"method": "POST"
 											}
 										},
@@ -5527,7 +5462,10 @@
 						},
 						"options": {
 							"legend": {
-								"calcs": ["mean", "lastNotNull"],
+								"calcs": [
+									"mean",
+									"lastNotNull"
+								],
 								"displayMode": "table",
 								"placement": "bottom",
 								"showLegend": true
@@ -5587,7 +5525,7 @@
 											"url_options": {
 												"body_content_type": "application/json",
 												"body_type": "raw",
-												"data": "{\"sql\": \"SELECT \\n            ds.day||'T00:00:00Z' AS time,\\n            (se.deep_duration + se.rem_duration + se.light_duration) / 3600.0 AS hours,\\n            ds.readiness_sleep_balance AS balance\\n        FROM daily_summaries ds\\n        LEFT JOIN sleep_episodes se ON ds.day = se.day AND se.type = 'long_sleep'\\n        WHERE ds.day >= date('now', '-90 days')\\n        ORDER BY ds.day\", \"params\": []}",
+												"data": "{\"sql\": \"SELECT \\n            ds.day||'T00:00:00Z' AS time,\\n            (se.deep_duration + se.rem_duration + se.light_duration) / 3600.0 AS hours,\\n            ds.readiness_sleep_balance AS balance\\n        FROM daily_summaries ds\\n        LEFT JOIN sleep_episodes se ON ds.day = se.day AND se.type = 'long_sleep'\\n        WHERE ds.day >= date('now', '-2 years')\\n        ORDER BY ds.day\", \"params\": []}",
 												"method": "POST"
 											}
 										},
@@ -5662,7 +5600,10 @@
 						},
 						"options": {
 							"legend": {
-								"calcs": ["mean", "lastNotNull"],
+								"calcs": [
+									"mean",
+									"lastNotNull"
+								],
 								"displayMode": "table",
 								"placement": "bottom",
 								"showLegend": true
@@ -5813,276 +5754,6 @@
 								"mode": "single",
 								"sort": "none"
 							}
-						}
-					},
-					"version": "12.4.0-21024277089.patch2"
-				}
-			}
-		},
-		"panel-1212": {
-			"kind": "Panel",
-			"spec": {
-				"data": {
-					"kind": "QueryGroup",
-					"spec": {
-						"queries": [
-							{
-								"kind": "PanelQuery",
-								"spec": {
-									"hidden": false,
-									"query": {
-										"datasource": {
-											"name": "ff8a5nfbpai9sc"
-										},
-										"group": "yesoreyeram-infinity-datasource",
-										"kind": "DataQuery",
-										"spec": {
-											"columns": [
-												{
-													"selector": "value",
-													"text": "value",
-													"type": "string"
-												}
-											],
-											"format": "table",
-											"parser": "backend",
-											"root_selector": "results",
-											"source": "url",
-											"type": "json",
-											"url": "https://oura.keith20.dev/api/sql",
-											"url_options": {
-												"body_content_type": "application/json",
-												"body_type": "raw",
-												"data": "{\"sql\": \"SELECT sleep_time_recommendation AS value FROM daily_summaries WHERE sleep_time_recommendation IS NOT NULL ORDER BY day DESC LIMIT 1\", \"params\": []}",
-												"method": "POST"
-											}
-										},
-										"version": "v0"
-									},
-									"refId": "A"
-								}
-							}
-						],
-						"queryOptions": {},
-						"transformations": []
-					}
-				},
-				"description": "Today's recommended action for your bedtime based on recent sleep patterns.",
-				"id": 1212,
-				"links": [],
-				"title": "Bedtime Recommendation",
-				"vizConfig": {
-					"group": "stat",
-					"kind": "VizConfig",
-					"spec": {
-						"fieldConfig": {
-							"defaults": {
-								"thresholds": {
-									"mode": "absolute",
-									"steps": [
-										{
-											"color": "blue",
-											"value": null
-										}
-									]
-								}
-							},
-							"overrides": []
-						},
-						"options": {
-							"colorMode": "value",
-							"graphMode": "none",
-							"justifyMode": "auto",
-							"orientation": "auto",
-							"percentChangeColorMode": "standard",
-							"reduceOptions": {
-								"calcs": ["lastNotNull"],
-								"fields": "",
-								"values": false
-							},
-							"showPercentChange": false,
-							"textMode": "value",
-							"wideLayout": true
-						}
-					},
-					"version": "12.4.0-21024277089.patch2"
-				}
-			}
-		},
-		"panel-1213": {
-			"kind": "Panel",
-			"spec": {
-				"data": {
-					"kind": "QueryGroup",
-					"spec": {
-						"queries": [
-							{
-								"kind": "PanelQuery",
-								"spec": {
-									"hidden": false,
-									"query": {
-										"datasource": {
-											"name": "ff8a5nfbpai9sc"
-										},
-										"group": "yesoreyeram-infinity-datasource",
-										"kind": "DataQuery",
-										"spec": {
-											"columns": [
-												{
-													"selector": "value",
-													"text": "value",
-													"type": "string"
-												}
-											],
-											"format": "table",
-											"parser": "backend",
-											"root_selector": "results",
-											"source": "url",
-											"type": "json",
-											"url": "https://oura.keith20.dev/api/sql",
-											"url_options": {
-												"body_content_type": "application/json",
-												"body_type": "raw",
-												"data": "{\"sql\": \"SELECT sleep_time_status AS value FROM daily_summaries WHERE sleep_time_status IS NOT NULL ORDER BY day DESC LIMIT 1\", \"params\": []}",
-												"method": "POST"
-											}
-										},
-										"version": "v0"
-									},
-									"refId": "A"
-								}
-							}
-						],
-						"queryOptions": {},
-						"transformations": []
-					}
-				},
-				"description": "Current sleep timing status used to determine bedtime recommendations.",
-				"id": 1213,
-				"links": [],
-				"title": "Sleep Timing Status",
-				"vizConfig": {
-					"group": "stat",
-					"kind": "VizConfig",
-					"spec": {
-						"fieldConfig": {
-							"defaults": {
-								"thresholds": {
-									"mode": "absolute",
-									"steps": [
-										{
-											"color": "blue",
-											"value": null
-										}
-									]
-								}
-							},
-							"overrides": []
-						},
-						"options": {
-							"colorMode": "value",
-							"graphMode": "none",
-							"justifyMode": "auto",
-							"orientation": "auto",
-							"percentChangeColorMode": "standard",
-							"reduceOptions": {
-								"calcs": ["lastNotNull"],
-								"fields": "",
-								"values": false
-							},
-							"showPercentChange": false,
-							"textMode": "value",
-							"wideLayout": true
-						}
-					},
-					"version": "12.4.0-21024277089.patch2"
-				}
-			}
-		},
-		"panel-1214": {
-			"kind": "Panel",
-			"spec": {
-				"data": {
-					"kind": "QueryGroup",
-					"spec": {
-						"queries": [
-							{
-								"kind": "PanelQuery",
-								"spec": {
-									"hidden": false,
-									"query": {
-										"datasource": {
-											"name": "ff8a5nfbpai9sc"
-										},
-										"group": "yesoreyeram-infinity-datasource",
-										"kind": "DataQuery",
-										"spec": {
-											"columns": [
-												{
-													"selector": "value",
-													"text": "value",
-													"type": "string"
-												}
-											],
-											"format": "table",
-											"parser": "backend",
-											"root_selector": "results",
-											"source": "url",
-											"type": "json",
-											"url": "https://oura.keith20.dev/api/sql",
-											"url_options": {
-												"body_content_type": "application/json",
-												"body_type": "raw",
-												"data": "{\"sql\": \"SELECT sleep_time_optimal_bedtime AS value FROM daily_summaries WHERE sleep_time_optimal_bedtime IS NOT NULL ORDER BY day DESC LIMIT 1\", \"params\": []}",
-												"method": "POST"
-											}
-										},
-										"version": "v0"
-									},
-									"refId": "A"
-								}
-							}
-						],
-						"queryOptions": {},
-						"transformations": []
-					}
-				},
-				"description": "Your recommended optimal bedtime window based on recent sleep and circadian rhythm data.",
-				"id": 1214,
-				"links": [],
-				"title": "Optimal Bedtime",
-				"vizConfig": {
-					"group": "stat",
-					"kind": "VizConfig",
-					"spec": {
-						"fieldConfig": {
-							"defaults": {
-								"thresholds": {
-									"mode": "absolute",
-									"steps": [
-										{
-											"color": "blue",
-											"value": null
-										}
-									]
-								}
-							},
-							"overrides": []
-						},
-						"options": {
-							"colorMode": "value",
-							"graphMode": "none",
-							"justifyMode": "auto",
-							"orientation": "auto",
-							"percentChangeColorMode": "standard",
-							"reduceOptions": {
-								"calcs": ["lastNotNull"],
-								"fields": "",
-								"values": false
-							},
-							"showPercentChange": false,
-							"textMode": "value",
-							"wideLayout": true
 						}
 					},
 					"version": "12.4.0-21024277089.patch2"
@@ -6282,7 +5953,9 @@
 							},
 							"pieType": "donut",
 							"reduceOptions": {
-								"calcs": ["lastNotNull"],
+								"calcs": [
+									"lastNotNull"
+								],
 								"fields": "",
 								"values": false
 							},
@@ -6616,13 +6289,849 @@
 							"orientation": "auto",
 							"percentChangeColorMode": "standard",
 							"reduceOptions": {
-								"calcs": ["lastNotNull"],
+								"calcs": [
+									"lastNotNull"
+								],
 								"fields": "",
 								"values": false
 							},
 							"showPercentChange": false,
 							"textMode": "auto",
 							"wideLayout": true
+						}
+					},
+					"version": "12.4.0-21024277089.patch2"
+				}
+			}
+		},
+		"panel-1215": {
+			"kind": "Panel",
+			"spec": {
+				"data": {
+					"kind": "QueryGroup",
+					"spec": {
+						"queries": [
+							{
+								"kind": "PanelQuery",
+								"spec": {
+									"hidden": false,
+									"query": {
+										"datasource": {
+											"name": "ff8a5nfbpai9sc"
+										},
+										"group": "yesoreyeram-infinity-datasource",
+										"kind": "DataQuery",
+										"spec": {
+											"columns": [
+												{
+													"selector": "time",
+													"text": "time",
+													"type": "timestamp"
+												},
+												{
+													"selector": "value",
+													"text": "value",
+													"type": "number"
+												}
+											],
+											"format": "table",
+											"parser": "backend",
+											"root_selector": "results",
+											"source": "url",
+											"type": "json",
+											"url": "https://oura.keith20.dev/api/sql",
+											"url_options": {
+												"body_content_type": "application/json",
+												"body_type": "raw",
+												"data": "{\"sql\": \"SELECT day||'T00:00:00Z' AS time, awake_duration/60.0 AS value FROM sleep_episodes WHERE type='long_sleep' AND awake_duration IS NOT NULL AND day >= date('now', '-2 years') ORDER BY day\", \"params\": []}",
+												"method": "POST"
+											}
+										},
+										"version": "v0"
+									},
+									"refId": "A"
+								}
+							}
+						],
+						"queryOptions": {},
+						"transformations": []
+					}
+				},
+				"description": "Time spent awake during sleep in minutes. Lower is better. High awake time reduces sleep quality and efficiency.",
+				"id": 1215,
+				"links": [],
+				"title": "Awake Duration (min)",
+				"vizConfig": {
+					"group": "timeseries",
+					"kind": "VizConfig",
+					"spec": {
+						"fieldConfig": {
+							"defaults": {
+								"color": {
+									"mode": "palette-classic"
+								},
+								"custom": {
+									"axisBorderShow": false,
+									"axisCenteredZero": false,
+									"axisColorMode": "text",
+									"axisLabel": "",
+									"axisPlacement": "auto",
+									"barAlignment": 0,
+									"barWidthFactor": 0.6,
+									"drawStyle": "line",
+									"fillOpacity": 0,
+									"gradientMode": "none",
+									"hideFrom": {
+										"legend": false,
+										"tooltip": false,
+										"viz": false
+									},
+									"insertNulls": false,
+									"lineInterpolation": "linear",
+									"lineWidth": 1,
+									"pointSize": 5,
+									"scaleDistribution": {
+										"type": "linear"
+									},
+									"showPoints": "auto",
+									"showValues": false,
+									"spanNulls": false,
+									"stacking": {
+										"group": "A",
+										"mode": "none"
+									},
+									"thresholdsStyle": {
+										"mode": "off"
+									}
+								},
+								"thresholds": {
+									"mode": "absolute",
+									"steps": [
+										{
+											"color": "green",
+											"value": 0
+										},
+										{
+											"color": "red",
+											"value": 80
+										}
+									]
+								},
+								"unit": "m",
+								"decimals": 0
+							},
+							"overrides": []
+						},
+						"options": {
+							"legend": {
+								"calcs": [],
+								"displayMode": "list",
+								"placement": "bottom",
+								"showLegend": true
+							},
+							"tooltip": {
+								"hideZeros": false,
+								"mode": "single",
+								"sort": "none"
+							}
+						}
+					},
+					"version": "12.4.0-21024277089.patch2"
+				}
+			}
+		},
+		"panel-2001": {
+			"kind": "Panel",
+			"spec": {
+				"data": {
+					"kind": "QueryGroup",
+					"spec": {
+						"queries": [
+							{
+								"kind": "PanelQuery",
+								"spec": {
+									"hidden": false,
+									"query": {
+										"datasource": {
+											"name": "ff8a5nfbpai9sc"
+										},
+										"group": "yesoreyeram-infinity-datasource",
+										"kind": "DataQuery",
+										"spec": {
+											"columns": [
+												{
+													"selector": "time",
+													"text": "time",
+													"type": "timestamp"
+												},
+												{
+													"selector": "min_hr",
+													"text": "min_hr",
+													"type": "number"
+												},
+												{
+													"selector": "avg_hr",
+													"text": "avg_hr",
+													"type": "number"
+												},
+												{
+													"selector": "max_hr",
+													"text": "max_hr",
+													"type": "number"
+												}
+											],
+											"format": "table",
+											"parser": "backend",
+											"root_selector": "results",
+											"source": "url",
+											"type": "json",
+											"url": "https://oura.keith20.dev/api/sql",
+											"url_options": {
+												"body_content_type": "application/json",
+												"body_type": "raw",
+												"data": "{\"sql\": \"SELECT substr(timestamp,1,10)||'T00:00:00Z' AS time, MIN(bpm) AS min_hr, ROUND(AVG(bpm),1) AS avg_hr, MAX(bpm) AS max_hr FROM heart_rate_samples WHERE timestamp >= datetime('now', '-90 days') GROUP BY substr(timestamp,1,10) ORDER BY time\", \"params\": []}",
+												"method": "POST"
+											}
+										},
+										"version": "v0"
+									},
+									"refId": "A"
+								}
+							}
+						],
+						"queryOptions": {},
+						"transformations": []
+					}
+				},
+				"description": "Daily minimum, average, and maximum heart rate from intraday samples. Shows the full range of your heart rate throughout each day.",
+				"id": 2001,
+				"links": [],
+				"title": "Daily HR Range (samples)",
+				"vizConfig": {
+					"group": "timeseries",
+					"kind": "VizConfig",
+					"spec": {
+						"fieldConfig": {
+							"defaults": {
+								"color": {
+									"mode": "palette-classic"
+								},
+								"custom": {
+									"axisBorderShow": false,
+									"axisCenteredZero": false,
+									"axisColorMode": "text",
+									"axisLabel": "",
+									"axisPlacement": "auto",
+									"barAlignment": 0,
+									"barWidthFactor": 0.6,
+									"drawStyle": "line",
+									"fillOpacity": 10,
+									"gradientMode": "none",
+									"hideFrom": {
+										"legend": false,
+										"tooltip": false,
+										"viz": false
+									},
+									"insertNulls": false,
+									"lineInterpolation": "linear",
+									"lineWidth": 1,
+									"pointSize": 5,
+									"scaleDistribution": {
+										"type": "linear"
+									},
+									"showPoints": "auto",
+									"showValues": false,
+									"spanNulls": false,
+									"stacking": {
+										"group": "A",
+										"mode": "none"
+									},
+									"thresholdsStyle": {
+										"mode": "off"
+									}
+								},
+								"thresholds": {
+									"mode": "absolute",
+									"steps": [
+										{
+											"color": "green",
+											"value": 0
+										},
+										{
+											"color": "red",
+											"value": 80
+										}
+									]
+								},
+								"unit": "bpm",
+								"decimals": 0
+							},
+							"overrides": []
+						},
+						"options": {
+							"legend": {
+								"calcs": [],
+								"displayMode": "list",
+								"placement": "bottom",
+								"showLegend": true
+							},
+							"tooltip": {
+								"hideZeros": false,
+								"mode": "single",
+								"sort": "none"
+							}
+						}
+					},
+					"version": "12.4.0-21024277089.patch2"
+				}
+			}
+		},
+		"panel-2002": {
+			"kind": "Panel",
+			"spec": {
+				"data": {
+					"kind": "QueryGroup",
+					"spec": {
+						"queries": [
+							{
+								"kind": "PanelQuery",
+								"spec": {
+									"hidden": false,
+									"query": {
+										"datasource": {
+											"name": "ff8a5nfbpai9sc"
+										},
+										"group": "yesoreyeram-infinity-datasource",
+										"kind": "DataQuery",
+										"spec": {
+											"columns": [
+												{
+													"selector": "time",
+													"text": "time",
+													"type": "timestamp"
+												},
+												{
+													"selector": "source",
+													"text": "source",
+													"type": "string"
+												},
+												{
+													"selector": "avg_bpm",
+													"text": "avg_bpm",
+													"type": "number"
+												}
+											],
+											"format": "table",
+											"parser": "backend",
+											"root_selector": "results",
+											"source": "url",
+											"type": "json",
+											"url": "https://oura.keith20.dev/api/sql",
+											"url_options": {
+												"body_content_type": "application/json",
+												"body_type": "raw",
+												"data": "{\"sql\": \"SELECT substr(timestamp,1,10)||'T00:00:00Z' AS time, source, ROUND(AVG(bpm),1) AS avg_bpm FROM heart_rate_samples WHERE timestamp >= datetime('now', '-90 days') GROUP BY substr(timestamp,1,10), source ORDER BY time\", \"params\": []}",
+												"method": "POST"
+											}
+										},
+										"version": "v0"
+									},
+									"refId": "A"
+								}
+							}
+						],
+						"queryOptions": {},
+						"transformations": []
+					}
+				},
+				"description": "Average heart rate by measurement source (awake, rest, sleep, workout, etc). Helps track resting vs active HR trends.",
+				"id": 2002,
+				"links": [],
+				"title": "HR by Source (daily avg)",
+				"vizConfig": {
+					"group": "timeseries",
+					"kind": "VizConfig",
+					"spec": {
+						"fieldConfig": {
+							"defaults": {
+								"color": {
+									"mode": "palette-classic"
+								},
+								"custom": {
+									"axisBorderShow": false,
+									"axisCenteredZero": false,
+									"axisColorMode": "text",
+									"axisLabel": "",
+									"axisPlacement": "auto",
+									"barAlignment": 0,
+									"barWidthFactor": 0.6,
+									"drawStyle": "line",
+									"fillOpacity": 0,
+									"gradientMode": "none",
+									"hideFrom": {
+										"legend": false,
+										"tooltip": false,
+										"viz": false
+									},
+									"insertNulls": false,
+									"lineInterpolation": "linear",
+									"lineWidth": 1,
+									"pointSize": 5,
+									"scaleDistribution": {
+										"type": "linear"
+									},
+									"showPoints": "auto",
+									"showValues": false,
+									"spanNulls": false,
+									"stacking": {
+										"group": "A",
+										"mode": "none"
+									},
+									"thresholdsStyle": {
+										"mode": "off"
+									}
+								},
+								"thresholds": {
+									"mode": "absolute",
+									"steps": [
+										{
+											"color": "green",
+											"value": 0
+										},
+										{
+											"color": "red",
+											"value": 80
+										}
+									]
+								},
+								"unit": "bpm",
+								"decimals": 0
+							},
+							"overrides": []
+						},
+						"options": {
+							"legend": {
+								"calcs": [],
+								"displayMode": "list",
+								"placement": "bottom",
+								"showLegend": true
+							},
+							"tooltip": {
+								"hideZeros": false,
+								"mode": "single",
+								"sort": "none"
+							}
+						}
+					},
+					"version": "12.4.0-21024277089.patch2"
+				}
+			}
+		},
+		"panel-1507": {
+			"kind": "Panel",
+			"spec": {
+				"data": {
+					"kind": "QueryGroup",
+					"spec": {
+						"queries": [
+							{
+								"kind": "PanelQuery",
+								"spec": {
+									"hidden": false,
+									"query": {
+										"datasource": {
+											"name": "ff8a5nfbpai9sc"
+										},
+										"group": "yesoreyeram-infinity-datasource",
+										"kind": "DataQuery",
+										"spec": {
+											"columns": [
+												{
+													"selector": "time",
+													"text": "time",
+													"type": "timestamp"
+												},
+												{
+													"selector": "value",
+													"text": "value",
+													"type": "number"
+												}
+											],
+											"format": "table",
+											"parser": "backend",
+											"root_selector": "results",
+											"source": "url",
+											"type": "json",
+											"url": "https://oura.keith20.dev/api/sql",
+											"url_options": {
+												"body_content_type": "application/json",
+												"body_type": "raw",
+												"data": "{\"sql\": \"SELECT day||'T00:00:00Z' AS time, spo2_percentage AS value FROM daily_summaries WHERE spo2_percentage IS NOT NULL AND day >= date('now', '-2 years') ORDER BY day\", \"params\": []}",
+												"method": "POST"
+											}
+										},
+										"version": "v0"
+									},
+									"refId": "A"
+								}
+							}
+						],
+						"queryOptions": {},
+						"transformations": []
+					}
+				},
+				"description": "Blood oxygen saturation trend. Normal is 95-100%. Persistent drops below 95% may indicate respiratory issues or altitude changes.",
+				"id": 1507,
+				"links": [],
+				"title": "SpO2 % Over Time",
+				"vizConfig": {
+					"group": "timeseries",
+					"kind": "VizConfig",
+					"spec": {
+						"fieldConfig": {
+							"defaults": {
+								"color": {
+									"mode": "palette-classic"
+								},
+								"custom": {
+									"axisBorderShow": false,
+									"axisCenteredZero": false,
+									"axisColorMode": "text",
+									"axisLabel": "",
+									"axisPlacement": "auto",
+									"barAlignment": 0,
+									"barWidthFactor": 0.6,
+									"drawStyle": "line",
+									"fillOpacity": 0,
+									"gradientMode": "none",
+									"hideFrom": {
+										"legend": false,
+										"tooltip": false,
+										"viz": false
+									},
+									"insertNulls": false,
+									"lineInterpolation": "linear",
+									"lineWidth": 1,
+									"pointSize": 5,
+									"scaleDistribution": {
+										"type": "linear"
+									},
+									"showPoints": "auto",
+									"showValues": false,
+									"spanNulls": false,
+									"stacking": {
+										"group": "A",
+										"mode": "none"
+									},
+									"thresholdsStyle": {
+										"mode": "off"
+									}
+								},
+								"thresholds": {
+									"mode": "absolute",
+									"steps": [
+										{
+											"color": "green",
+											"value": 0
+										},
+										{
+											"color": "red",
+											"value": 80
+										}
+									]
+								},
+								"unit": "percent",
+								"decimals": 1,
+								"min": 90,
+								"max": 100
+							},
+							"overrides": []
+						},
+						"options": {
+							"legend": {
+								"calcs": [],
+								"displayMode": "list",
+								"placement": "bottom",
+								"showLegend": true
+							},
+							"tooltip": {
+								"hideZeros": false,
+								"mode": "single",
+								"sort": "none"
+							}
+						}
+					},
+					"version": "12.4.0-21024277089.patch2"
+				}
+			}
+		},
+		"panel-1509": {
+			"kind": "Panel",
+			"spec": {
+				"data": {
+					"kind": "QueryGroup",
+					"spec": {
+						"queries": [
+							{
+								"kind": "PanelQuery",
+								"spec": {
+									"hidden": false,
+									"query": {
+										"datasource": {
+											"name": "ff8a5nfbpai9sc"
+										},
+										"group": "yesoreyeram-infinity-datasource",
+										"kind": "DataQuery",
+										"spec": {
+											"columns": [
+												{
+													"selector": "time",
+													"text": "time",
+													"type": "timestamp"
+												},
+												{
+													"selector": "value",
+													"text": "value",
+													"type": "number"
+												}
+											],
+											"format": "table",
+											"parser": "backend",
+											"root_selector": "results",
+											"source": "url",
+											"type": "json",
+											"url": "https://oura.keith20.dev/api/sql",
+											"url_options": {
+												"body_content_type": "application/json",
+												"body_type": "raw",
+												"data": "{\"sql\": \"SELECT day||'T00:00:00Z' AS time, cv_age_offset AS value FROM daily_summaries WHERE cv_age_offset IS NOT NULL AND day >= date('now', '-2 years') ORDER BY day\", \"params\": []}",
+												"method": "POST"
+											}
+										},
+										"version": "v0"
+									},
+									"refId": "A"
+								}
+							}
+						],
+						"queryOptions": {},
+						"transformations": []
+					}
+				},
+				"description": "Difference between your estimated cardiovascular age and actual age. Negative values mean your heart is younger than your age. Tracks long-term fitness.",
+				"id": 1509,
+				"links": [],
+				"title": "Cardiovascular Age Offset",
+				"vizConfig": {
+					"group": "timeseries",
+					"kind": "VizConfig",
+					"spec": {
+						"fieldConfig": {
+							"defaults": {
+								"color": {
+									"mode": "palette-classic"
+								},
+								"custom": {
+									"axisBorderShow": false,
+									"axisCenteredZero": true,
+									"axisColorMode": "text",
+									"axisLabel": "",
+									"axisPlacement": "auto",
+									"barAlignment": 0,
+									"barWidthFactor": 0.6,
+									"drawStyle": "line",
+									"fillOpacity": 0,
+									"gradientMode": "none",
+									"hideFrom": {
+										"legend": false,
+										"tooltip": false,
+										"viz": false
+									},
+									"insertNulls": false,
+									"lineInterpolation": "linear",
+									"lineWidth": 1,
+									"pointSize": 5,
+									"scaleDistribution": {
+										"type": "linear"
+									},
+									"showPoints": "auto",
+									"showValues": false,
+									"spanNulls": false,
+									"stacking": {
+										"group": "A",
+										"mode": "none"
+									},
+									"thresholdsStyle": {
+										"mode": "off"
+									}
+								},
+								"thresholds": {
+									"mode": "absolute",
+									"steps": [
+										{
+											"color": "green",
+											"value": 0
+										},
+										{
+											"color": "red",
+											"value": 80
+										}
+									]
+								},
+								"unit": "short",
+								"decimals": 0
+							},
+							"overrides": []
+						},
+						"options": {
+							"legend": {
+								"calcs": [],
+								"displayMode": "list",
+								"placement": "bottom",
+								"showLegend": true
+							},
+							"tooltip": {
+								"hideZeros": false,
+								"mode": "single",
+								"sort": "none"
+							}
+						}
+					},
+					"version": "12.4.0-21024277089.patch2"
+				}
+			}
+		},
+		"panel-1503": {
+			"kind": "Panel",
+			"spec": {
+				"data": {
+					"kind": "QueryGroup",
+					"spec": {
+						"queries": [
+							{
+								"kind": "PanelQuery",
+								"spec": {
+									"hidden": false,
+									"query": {
+										"datasource": {
+											"name": "ff8a5nfbpai9sc"
+										},
+										"group": "yesoreyeram-infinity-datasource",
+										"kind": "DataQuery",
+										"spec": {
+											"columns": [
+												{
+													"selector": "time",
+													"text": "time",
+													"type": "timestamp"
+												},
+												{
+													"selector": "value",
+													"text": "value",
+													"type": "number"
+												}
+											],
+											"format": "table",
+											"parser": "backend",
+											"root_selector": "results",
+											"source": "url",
+											"type": "json",
+											"url": "https://oura.keith20.dev/api/sql",
+											"url_options": {
+												"body_content_type": "application/json",
+												"body_type": "raw",
+												"data": "{\"sql\": \"SELECT day||'T00:00:00Z' AS time, CASE resilience_level WHEN 'limited' THEN 1 WHEN 'adequate' THEN 2 WHEN 'solid' THEN 3 WHEN 'strong' THEN 4 ELSE NULL END AS value FROM daily_summaries WHERE resilience_level IS NOT NULL AND day >= date('now', '-2 years') ORDER BY day\", \"params\": []}",
+												"method": "POST"
+											}
+										},
+										"version": "v0"
+									},
+									"refId": "A"
+								}
+							}
+						],
+						"queryOptions": {},
+						"transformations": []
+					}
+				},
+				"description": "Daily resilience level mapped to numeric: 1=Limited, 2=Adequate, 3=Solid, 4=Strong. Reflects your body's ability to handle stress and recover.",
+				"id": 1503,
+				"links": [],
+				"title": "Resilience Level",
+				"vizConfig": {
+					"group": "timeseries",
+					"kind": "VizConfig",
+					"spec": {
+						"fieldConfig": {
+							"defaults": {
+								"color": {
+									"mode": "palette-classic"
+								},
+								"custom": {
+									"axisBorderShow": false,
+									"axisCenteredZero": false,
+									"axisColorMode": "text",
+									"axisLabel": "",
+									"axisPlacement": "auto",
+									"barAlignment": 0,
+									"barWidthFactor": 0.6,
+									"drawStyle": "points",
+									"fillOpacity": 0,
+									"gradientMode": "none",
+									"hideFrom": {
+										"legend": false,
+										"tooltip": false,
+										"viz": false
+									},
+									"insertNulls": false,
+									"lineInterpolation": "linear",
+									"lineWidth": 1,
+									"pointSize": 4,
+									"scaleDistribution": {
+										"type": "linear"
+									},
+									"showPoints": "auto",
+									"showValues": false,
+									"spanNulls": false,
+									"stacking": {
+										"group": "A",
+										"mode": "none"
+									},
+									"thresholdsStyle": {
+										"mode": "off"
+									}
+								},
+								"thresholds": {
+									"mode": "absolute",
+									"steps": [
+										{
+											"color": "green",
+											"value": 0
+										},
+										{
+											"color": "red",
+											"value": 80
+										}
+									]
+								},
+								"min": 0,
+								"max": 5,
+								"decimals": 0
+							},
+							"overrides": []
+						},
+						"options": {
+							"legend": {
+								"calcs": [],
+								"displayMode": "list",
+								"placement": "bottom",
+								"showLegend": true
+							},
+							"tooltip": {
+								"hideZeros": false,
+								"mode": "single",
+								"sort": "none"
+							}
 						}
 					},
 					"version": "12.4.0-21024277089.patch2"
@@ -6718,6 +7227,58 @@
 											"width": 4,
 											"x": 20,
 											"y": 0
+										}
+									},
+									{
+										"kind": "GridLayoutItem",
+										"spec": {
+											"element": {
+												"kind": "ElementReference",
+												"name": "panel-1007"
+											},
+											"height": 5,
+											"width": 6,
+											"x": 0,
+											"y": 5
+										}
+									},
+									{
+										"kind": "GridLayoutItem",
+										"spec": {
+											"element": {
+												"kind": "ElementReference",
+												"name": "panel-1008"
+											},
+											"height": 5,
+											"width": 6,
+											"x": 6,
+											"y": 5
+										}
+									},
+									{
+										"kind": "GridLayoutItem",
+										"spec": {
+											"element": {
+												"kind": "ElementReference",
+												"name": "panel-1009"
+											},
+											"height": 5,
+											"width": 6,
+											"x": 12,
+											"y": 5
+										}
+									},
+									{
+										"kind": "GridLayoutItem",
+										"spec": {
+											"element": {
+												"kind": "ElementReference",
+												"name": "panel-1010"
+											},
+											"height": 5,
+											"width": 6,
+											"x": 18,
+											"y": 5
 										}
 									}
 								]
@@ -6912,7 +7473,7 @@
 												"name": "panel-1207"
 											},
 											"height": 8,
-											"width": 8,
+											"width": 6,
 											"x": 0,
 											"y": 16
 										}
@@ -6925,8 +7486,8 @@
 												"name": "panel-1208"
 											},
 											"height": 8,
-											"width": 8,
-											"x": 8,
+											"width": 6,
+											"x": 6,
 											"y": 16
 										}
 									},
@@ -6938,8 +7499,8 @@
 												"name": "panel-1209"
 											},
 											"height": 8,
-											"width": 8,
-											"x": 16,
+											"width": 6,
+											"x": 12,
 											"y": 16
 										}
 									},
@@ -6974,38 +7535,12 @@
 										"spec": {
 											"element": {
 												"kind": "ElementReference",
-												"name": "panel-1212"
+												"name": "panel-1215"
 											},
-											"height": 5,
-											"width": 8,
-											"x": 0,
-											"y": 32
-										}
-									},
-									{
-										"kind": "GridLayoutItem",
-										"spec": {
-											"element": {
-												"kind": "ElementReference",
-												"name": "panel-1213"
-											},
-											"height": 5,
-											"width": 8,
-											"x": 8,
-											"y": 32
-										}
-									},
-									{
-										"kind": "GridLayoutItem",
-										"spec": {
-											"element": {
-												"kind": "ElementReference",
-												"name": "panel-1214"
-											},
-											"height": 5,
-											"width": 8,
-											"x": 16,
-											"y": 32
+											"height": 8,
+											"width": 6,
+											"x": 18,
+											"y": 16
 										}
 									}
 								]
@@ -7175,7 +7710,7 @@
 												"name": "panel-1501"
 											},
 											"height": 8,
-											"width": 12,
+											"width": 8,
 											"x": 0,
 											"y": 0
 										}
@@ -7188,8 +7723,8 @@
 												"name": "panel-1502"
 											},
 											"height": 8,
-											"width": 12,
-											"x": 12,
+											"width": 8,
+											"x": 8,
 											"y": 0
 										}
 									},
@@ -7198,7 +7733,33 @@
 										"spec": {
 											"element": {
 												"kind": "ElementReference",
-												"name": "panel-1504"
+												"name": "panel-1503"
+											},
+											"height": 8,
+											"width": 8,
+											"x": 16,
+											"y": 0
+										}
+									},
+									{
+										"kind": "GridLayoutItem",
+										"spec": {
+											"element": {
+												"kind": "ElementReference",
+												"name": "panel-1507"
+											},
+											"height": 8,
+											"width": 12,
+											"x": 0,
+											"y": 8
+										}
+									},
+									{
+										"kind": "GridLayoutItem",
+										"spec": {
+											"element": {
+												"kind": "ElementReference",
+												"name": "panel-1509"
 											},
 											"height": 8,
 											"width": 12,
@@ -7211,12 +7772,25 @@
 										"spec": {
 											"element": {
 												"kind": "ElementReference",
+												"name": "panel-1504"
+											},
+											"height": 8,
+											"width": 12,
+											"x": 0,
+											"y": 16
+										}
+									},
+									{
+										"kind": "GridLayoutItem",
+										"spec": {
+											"element": {
+												"kind": "ElementReference",
 												"name": "panel-1505"
 											},
 											"height": 10,
 											"width": 12,
 											"x": 0,
-											"y": 8
+											"y": 24
 										}
 									},
 									{
@@ -7229,13 +7803,53 @@
 											"height": 5,
 											"width": 12,
 											"x": 12,
-											"y": 8
+											"y": 24
 										}
 									}
 								]
 							}
 						},
 						"title": "Stress & Recovery"
+					}
+				},
+				{
+					"kind": "RowsLayoutRow",
+					"spec": {
+						"collapse": true,
+						"layout": {
+							"kind": "GridLayout",
+							"spec": {
+								"items": [
+									{
+										"kind": "GridLayoutItem",
+										"spec": {
+											"element": {
+												"kind": "ElementReference",
+												"name": "panel-2001"
+											},
+											"height": 10,
+											"width": 24,
+											"x": 0,
+											"y": 0
+										}
+									},
+									{
+										"kind": "GridLayoutItem",
+										"spec": {
+											"element": {
+												"kind": "ElementReference",
+												"name": "panel-2002"
+											},
+											"height": 10,
+											"width": 24,
+											"x": 0,
+											"y": 10
+										}
+									}
+								]
+							}
+						},
+						"title": "Heart Rate Samples"
 					}
 				},
 				{
@@ -7417,10 +8031,24 @@
 	"links": [],
 	"liveNow": false,
 	"preload": false,
-	"tags": ["oura", "health"],
+	"tags": [
+		"oura",
+		"health"
+	],
 	"timeSettings": {
 		"autoRefresh": "",
-		"autoRefreshIntervals": ["5s", "10s", "30s", "1m", "5m", "15m", "30m", "1h", "2h", "1d"],
+		"autoRefreshIntervals": [
+			"5s",
+			"10s",
+			"30s",
+			"1m",
+			"5m",
+			"15m",
+			"30m",
+			"1h",
+			"2h",
+			"1d"
+		],
 		"fiscalYearStartMonth": 0,
 		"from": "now-90d",
 		"hideTimepicker": false,

@@ -615,13 +615,18 @@ export default {
 			if (start) {
 				where.push('day >= ?');
 				args.push(start);
+			} else {
+				// Default to last 90 days to avoid full table scans when no start date is specified
+				const cutoff = new Date(Date.now() - 90 * 86400000).toISOString().substring(0, 10);
+				where.push('day >= ?');
+				args.push(cutoff);
 			}
 			if (end) {
 				where.push('day <= ?');
 				args.push(end);
 			}
 
-			const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+			const whereSql = `WHERE ${where.join(' AND ')}`;
 			try {
 				const stmt = env.oura_db.prepare(`SELECT * FROM daily_summaries ${whereSql} ORDER BY day ASC`);
 				const out = args.length ? await stmt.bind(...args).all() : await stmt.all();
@@ -686,9 +691,35 @@ export default {
 				const maxRows = env.MAX_QUERY_ROWS ? parseInt(env.MAX_QUERY_ROWS, 10) : DEFAULT_MAX_QUERY_ROWS;
 				const timeoutMs = env.QUERY_TIMEOUT_MS ? parseInt(env.QUERY_TIMEOUT_MS, 10) : DEFAULT_QUERY_TIMEOUT_MS;
 
+				// Inject or cap LIMIT to prevent D1 from reading unlimited rows.
+				// This avoids reading rows that would just be rejected by the post-query row-count check.
+				const sqlTrimmed = sql.replace(/;\s*$/, '').trim();
+
+				// Strip trailing SQL comments before LIMIT detection to prevent bypass via:
+				//   "SELECT * FROM foo LIMIT 999999 -- comment" (would hide LIMIT from regex)
+				let sqlForLimitCheck = sqlTrimmed.replace(/--[^\n]*$/, '').trim();
+				sqlForLimitCheck = sqlForLimitCheck.replace(/\/\*[\s\S]*?\*\/\s*$/, '').trim();
+
+				const limitMatch = sqlForLimitCheck.match(/\bLIMIT\s+(\d+)(\s*(?:OFFSET\s+\d+\s*)?)$/i);
+				let effectiveSql: string;
+				if (limitMatch) {
+					const userLimit = parseInt(limitMatch[1], 10);
+					if (userLimit > maxRows) {
+						// Cap the outermost LIMIT to maxRows+1 so the post-query check still triggers correctly.
+						// Use the match index to replace only the matched LIMIT at the end, not one in a subquery.
+						const matchStart = limitMatch.index ?? sqlForLimitCheck.length;
+						const offsetSuffix = limitMatch[2] || '';
+						effectiveSql = sqlForLimitCheck.substring(0, matchStart) + `LIMIT ${maxRows + 1}` + offsetSuffix;
+					} else {
+						effectiveSql = sqlTrimmed;
+					}
+				} else {
+					effectiveSql = `${sqlTrimmed} LIMIT ${maxRows + 1}`;
+				}
+
 				// Execute query with timeout
 				const queryPromise = env.oura_db
-					.prepare(sql)
+					.prepare(effectiveSql)
 					.bind(...params)
 					.all();
 
@@ -811,9 +842,9 @@ export default {
 				UNION ALL
 				SELECT 'sleep_episodes', MIN(day), MAX(day), COUNT(*) FROM sleep_episodes
 				UNION ALL
-				SELECT 'heart_rate_samples', MIN(substr(timestamp,1,10)), MAX(substr(timestamp,1,10)), COUNT(*) FROM heart_rate_samples
+				SELECT 'heart_rate_samples', MIN(timestamp), MAX(timestamp), COUNT(*) FROM heart_rate_samples
 				UNION ALL
-				SELECT 'activity_logs', MIN(substr(start_datetime,1,10)), MAX(substr(start_datetime,1,10)), COUNT(*) FROM activity_logs
+				SELECT 'activity_logs', MIN(start_datetime), MAX(start_datetime), COUNT(*) FROM activity_logs
 				UNION ALL
 				SELECT 'enhanced_tags', MIN(start_day), MAX(start_day), COUNT(*) FROM enhanced_tags
 				UNION ALL
@@ -822,8 +853,17 @@ export default {
 					)
 					.all();
 
+				// Truncate datetime values to date-only (YYYY-MM-DD) for tables that store full timestamps
+				const truncatedResults = (
+					stats.results as Array<{ resource: string; min_day: string | null; max_day: string | null; record_count: number }>
+				).map((row) => ({
+					...row,
+					min_day: row.min_day?.substring(0, 10) ?? null,
+					max_day: row.max_day?.substring(0, 10) ?? null,
+				}));
+
 				return withCors(
-					new Response(JSON.stringify(stats.results), {
+					new Response(JSON.stringify(truncatedResults), {
 						headers: {
 							'Content-Type': 'application/json',
 							'Cache-Control': 'private, max-age=60', // Short cache since it's a fallback
@@ -839,10 +879,16 @@ export default {
 			}
 		}
 
-		// Serve all data to Grafana (root endpoint only)
+		// Serve recent daily summaries (root endpoint)
+		// Note: Grafana dashboard uses /api/sql exclusively; this endpoint is a convenience fallback.
+		// Default to last 90 days to avoid full table scans. Use ?days=N to override (max 3650).
 		if (url.pathname === '/') {
 			try {
-				const { results } = await env.oura_db.prepare('SELECT * FROM daily_summaries ORDER BY day ASC').all();
+				const daysParam = url.searchParams.get('days');
+				const days = Math.min(Math.max(parseInt(daysParam || '90', 10) || 90, 1), 3650);
+				// Compute the cutoff date in JS to avoid any string interpolation in SQL
+				const cutoff = new Date(Date.now() - days * 86400000).toISOString().substring(0, 10);
+				const { results } = await env.oura_db.prepare('SELECT * FROM daily_summaries WHERE day >= ? ORDER BY day ASC').bind(cutoff).all();
 				return withCors(
 					new Response(JSON.stringify(results), {
 						headers: {
@@ -1896,11 +1942,13 @@ async function updateTableStats(env: Env): Promise<void> {
 			},
 			{
 				resource: 'heart_rate_samples',
-				query: `SELECT 'heart_rate_samples' AS resource, MIN(substr(timestamp,1,10)) AS min_day, MAX(substr(timestamp,1,10)) AS max_day, COUNT(*) AS record_count FROM heart_rate_samples`,
+				// Use bare MIN/MAX on PK column for O(1) index lookup instead of substr() which forces full table scan
+				query: `SELECT 'heart_rate_samples' AS resource, MIN(timestamp) AS min_day, MAX(timestamp) AS max_day, COUNT(*) AS record_count FROM heart_rate_samples`,
 			},
 			{
 				resource: 'activity_logs',
-				query: `SELECT 'activity_logs' AS resource, MIN(substr(start_datetime,1,10)) AS min_day, MAX(substr(start_datetime,1,10)) AS max_day, COUNT(*) AS record_count FROM activity_logs`,
+				// Use bare MIN/MAX on indexed column for O(1) index lookup instead of substr() which forces full table scan
+				query: `SELECT 'activity_logs' AS resource, MIN(start_datetime) AS min_day, MAX(start_datetime) AS max_day, COUNT(*) AS record_count FROM activity_logs`,
 			},
 			{
 				resource: 'enhanced_tags',
@@ -1912,27 +1960,45 @@ async function updateTableStats(env: Env): Promise<void> {
 			},
 		];
 
-		// Update stats for each table
-		const updateStatements = [];
-		for (const stat of stats) {
-			const result = await env.oura_db.prepare(stat.query).first<{
-				resource: string;
-				min_day: string | null;
-				max_day: string | null;
-				record_count: number;
-			}>();
+		// Run all stat queries in parallel (they are independent reads)
+		const settled = await Promise.allSettled(
+			stats.map((stat) =>
+				env.oura_db.prepare(stat.query).first<{
+					resource: string;
+					min_day: string | null;
+					max_day: string | null;
+					record_count: number;
+				}>(),
+			),
+		);
 
+		const updateStatements = [];
+		for (let i = 0; i < settled.length; i++) {
+			const entry = settled[i];
+			if (entry.status === 'rejected') {
+				console.warn('Stat query failed', {
+					resource: stats[i].resource,
+					error: entry.reason instanceof Error ? entry.reason.message : String(entry.reason),
+				});
+				continue;
+			}
+			const result = entry.value;
 			if (result) {
+				// Truncate datetime values to date-only (YYYY-MM-DD) for tables that store full timestamps
+				// This is needed because we removed substr() from the SQL for MIN/MAX index optimization
+				const minDay = result.min_day?.substring(0, 10) ?? null;
+				const maxDay = result.max_day?.substring(0, 10) ?? null;
+
 				const stmt = env.oura_db.prepare(
 					`INSERT INTO table_stats (resource, min_day, max_day, record_count, updated_at)
-					VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-					ON CONFLICT(resource) DO UPDATE SET
-						min_day=excluded.min_day,
-						max_day=excluded.max_day,
-						record_count=excluded.record_count,
-						updated_at=excluded.updated_at`,
+				VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+				ON CONFLICT(resource) DO UPDATE SET
+					min_day=excluded.min_day,
+					max_day=excluded.max_day,
+					record_count=excluded.record_count,
+					updated_at=excluded.updated_at`,
 				);
-				updateStatements.push(stmt.bind(result.resource, result.min_day, result.max_day, result.record_count));
+				updateStatements.push(stmt.bind(result.resource, minDay, maxDay, result.record_count));
 			}
 		}
 
