@@ -72,10 +72,7 @@ async function constantTimeCompare(a: string, b: string): Promise<boolean> {
 
 	// Hash both to fixed-length buffers so timingSafeEqual always compares equal-length inputs,
 	// avoiding length-based timing leaks when a and b have different lengths.
-	const [aHash, bHash] = await Promise.all([
-		crypto.subtle.digest('SHA-256', aBytes),
-		crypto.subtle.digest('SHA-256', bBytes),
-	]);
+	const [aHash, bHash] = await Promise.all([crypto.subtle.digest('SHA-256', aBytes), crypto.subtle.digest('SHA-256', bBytes)]);
 
 	return crypto.subtle.timingSafeEqual(aHash, bHash);
 }
@@ -349,7 +346,9 @@ export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext) {
 		// Parse configurable CORS origins once per request (env.ALLOWED_ORIGINS is comma-separated)
 		_corsOrigins = env.ALLOWED_ORIGINS
-			? env.ALLOWED_ORIGINS.split(',').map((o) => o.trim()).filter(Boolean)
+			? env.ALLOWED_ORIGINS.split(',')
+					.map((o) => o.trim())
+					.filter(Boolean)
 			: DEFAULT_CORS_ORIGINS;
 
 		const url = new URL(request.url);
@@ -637,10 +636,7 @@ export default {
 		if (url.pathname === '/backfill/status') {
 			const instanceId = url.searchParams.get('id');
 			if (!instanceId) {
-				return withCors(
-					Response.json({ error: 'Missing required parameter: id' }, { status: 400 }),
-					origin,
-				);
+				return withCors(Response.json({ error: 'Missing required parameter: id' }, { status: 400 }), origin);
 			}
 
 			try {
@@ -756,7 +752,10 @@ export default {
 				for (let i = 0; i < params.length; i++) {
 					const p = params[i];
 					if (p !== null && typeof p !== 'string' && typeof p !== 'number' && typeof p !== 'boolean') {
-						return withCors(Response.json({ error: `Invalid parameter type at index ${i}: expected string, number, boolean, or null` }, { status: 400 }), origin);
+						return withCors(
+							Response.json({ error: `Invalid parameter type at index ${i}: expected string, number, boolean, or null` }, { status: 400 }),
+							origin,
+						);
 					}
 				}
 
@@ -1146,10 +1145,22 @@ async function saveToD1(env: Env, endpoint: string, data: Record<string, any>[])
 	// Normalize endpoint name to handle API version renames
 	const normalizedEndpoint = RESOURCE_ALIASES[endpoint] ?? endpoint;
 	const KNOWN_ENDPOINTS = new Set([
-		'daily_readiness', 'daily_sleep', 'daily_activity', 'daily_stress',
-		'daily_resilience', 'daily_spo2', 'daily_cardiovascular_age', 'vo2_max',
-		'sleep', 'heartrate', 'workout', 'session', 'tag', 'enhanced_tag',
-		'rest_mode_period', 'sleep_time',
+		'daily_readiness',
+		'daily_sleep',
+		'daily_activity',
+		'daily_stress',
+		'daily_resilience',
+		'daily_spo2',
+		'daily_cardiovascular_age',
+		'vo2_max',
+		'sleep',
+		'heartrate',
+		'workout',
+		'session',
+		'tag',
+		'enhanced_tag',
+		'rest_mode_period',
+		'sleep_time',
 	]);
 
 	// daily_readiness -> daily_summaries (readiness fields)
@@ -2229,25 +2240,17 @@ export class BackfillWorkflow extends WorkflowEntrypoint<Env, BackfillParams> {
 		}
 
 		// Step 3: Update table stats after all resources are synced
-		await step.do(
-			'update-stats',
-			{ retries: { limit: 2, delay: '5 seconds', backoff: 'constant' }, timeout: '30 seconds' },
-			async () => {
-				await updateTableStats(this.env);
-			},
-		);
+		await step.do('update-stats', { retries: { limit: 2, delay: '5 seconds', backoff: 'constant' }, timeout: '30 seconds' }, async () => {
+			await updateTableStats(this.env);
+		});
 
 		// Step 4: Flush SQL KV cache so dashboards see fresh data
-		await step.do(
-			'flush-cache',
-			{ retries: { limit: 2, delay: '2 seconds', backoff: 'constant' }, timeout: '15 seconds' },
-			async () => {
-				if (this.env.OURA_CACHE) {
-					const flushed = await flushSqlCache(this.env.OURA_CACHE);
-					console.log('Backfill workflow flushed SQL cache', { entriesFlushed: flushed });
-				}
-			},
-		);
+		await step.do('flush-cache', { retries: { limit: 2, delay: '2 seconds', backoff: 'constant' }, timeout: '15 seconds' }, async () => {
+			if (this.env.OURA_CACHE) {
+				const flushed = await flushSqlCache(this.env.OURA_CACHE);
+				console.log('Backfill workflow flushed SQL cache', { entriesFlushed: flushed });
+			}
+		});
 
 		// Return summary for status polling
 		const successful = results.filter((r) => r.success).length;

@@ -23,14 +23,24 @@ beforeAll(async () => {
 		)`),
 		db.prepare(`CREATE TABLE IF NOT EXISTS heart_rate_samples (timestamp DATETIME PRIMARY KEY, bpm INTEGER, source TEXT)`),
 		db.prepare(`CREATE TABLE IF NOT EXISTS sleep_episodes (id TEXT PRIMARY KEY, day DATE, type TEXT)`),
-		db.prepare(`CREATE TABLE IF NOT EXISTS oura_oauth_tokens (user_id TEXT PRIMARY KEY, access_token TEXT, refresh_token TEXT, expires_at INTEGER)`),
+		db.prepare(
+			`CREATE TABLE IF NOT EXISTS oura_oauth_tokens (user_id TEXT PRIMARY KEY, access_token TEXT, refresh_token TEXT, expires_at INTEGER)`,
+		),
 		db.prepare(`CREATE TABLE IF NOT EXISTS oura_oauth_states (state TEXT PRIMARY KEY, user_id TEXT, created_at INTEGER)`),
-		db.prepare(`CREATE TABLE IF NOT EXISTS table_stats (resource TEXT PRIMARY KEY, min_day TEXT, max_day TEXT, record_count INTEGER, updated_at TEXT)`),
+		db.prepare(
+			`CREATE TABLE IF NOT EXISTS table_stats (resource TEXT PRIMARY KEY, min_day TEXT, max_day TEXT, record_count INTEGER, updated_at TEXT)`,
+		),
 	]);
 	await db.batch([
-		db.prepare(`INSERT OR REPLACE INTO daily_summaries (day, readiness_score, sleep_score, activity_score, activity_steps) VALUES ('2026-02-28', 85, 90, 75, 8000)`),
-		db.prepare(`INSERT OR REPLACE INTO daily_summaries (day, readiness_score, sleep_score, activity_score, activity_steps) VALUES ('2026-02-27', 72, 80, 65, 6000)`),
-		db.prepare(`INSERT OR REPLACE INTO daily_summaries (day, readiness_score, sleep_score, activity_score, activity_steps) VALUES ('2026-02-26', 91, 88, 82, 10000)`),
+		db.prepare(
+			`INSERT OR REPLACE INTO daily_summaries (day, readiness_score, sleep_score, activity_score, activity_steps) VALUES ('2026-02-28', 85, 90, 75, 8000)`,
+		),
+		db.prepare(
+			`INSERT OR REPLACE INTO daily_summaries (day, readiness_score, sleep_score, activity_score, activity_steps) VALUES ('2026-02-27', 72, 80, 65, 6000)`,
+		),
+		db.prepare(
+			`INSERT OR REPLACE INTO daily_summaries (day, readiness_score, sleep_score, activity_score, activity_steps) VALUES ('2026-02-26', 91, 88, 82, 10000)`,
+		),
 	]);
 });
 

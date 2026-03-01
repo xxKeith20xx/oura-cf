@@ -70,18 +70,18 @@ A Cloudflare Worker that syncs Oura Ring health data to a D1 database and serves
 
 ### Technology Stack
 
-| Component          | Technology             | Purpose                           |
-| ------------------ | ---------------------- | --------------------------------- |
-| **Runtime**        | Cloudflare Workers     | Edge computing platform           |
-| **Database**       | Cloudflare D1 (SQLite) | Structured data storage           |
-| **Cache**          | Cloudflare KV          | SQL query + OpenAPI spec caching  |
-| **Workflows**      | Cloudflare Workflows   | Durable backfill orchestration    |
-| **Analytics**      | Analytics Engine       | Query and auth metrics            |
-| **Authentication** | Oura OAuth2            | Secure API access                 |
-| **Visualization**  | Grafana Cloud          | Dashboards and analytics          |
-| **Language**       | TypeScript 5.9         | Type-safe development             |
-| **Testing**        | Vitest + Workers Pool  | 49 tests with Miniflare bindings  |
-| **Deployment**     | Wrangler 4.68          | CLI deployment tool               |
+| Component          | Technology             | Purpose                          |
+| ------------------ | ---------------------- | -------------------------------- |
+| **Runtime**        | Cloudflare Workers     | Edge computing platform          |
+| **Database**       | Cloudflare D1 (SQLite) | Structured data storage          |
+| **Cache**          | Cloudflare KV          | SQL query + OpenAPI spec caching |
+| **Workflows**      | Cloudflare Workflows   | Durable backfill orchestration   |
+| **Analytics**      | Analytics Engine       | Query and auth metrics           |
+| **Authentication** | Oura OAuth2            | Secure API access                |
+| **Visualization**  | Grafana Cloud          | Dashboards and analytics         |
+| **Language**       | TypeScript 5.9         | Type-safe development            |
+| **Testing**        | Vitest + Workers Pool  | 49 tests with Miniflare bindings |
+| **Deployment**     | Wrangler 4.68          | CLI deployment tool              |
 
 ## Quick Start
 
@@ -343,49 +343,49 @@ Key settings in `wrangler.jsonc`:
 
 ```jsonc
 {
-  "compatibility_date": "2026-02-24",
-  "triggers": {
-    "crons": ["0 1,12,18 * * *"] // Sync 3x daily
-  },
-  "workflows": [
-    {
-      "name": "backfill-workflow",
-      "binding": "BACKFILL_WORKFLOW",
-      "class_name": "BackfillWorkflow"
-    }
-  ],
-  "d1_databases": [
-    {
-      "binding": "oura_db",
-      "database_id": "YOUR_D1_DATABASE_ID"
-    }
-  ],
-  "kv_namespaces": [
-    {
-      "binding": "OURA_CACHE",
-      "id": "YOUR_KV_NAMESPACE_ID"
-    }
-  ],
-  "analytics_engine_datasets": [
-    {
-      "binding": "OURA_ANALYTICS",
-      "dataset": "oura_metrics"
-    }
-  ]
+	"compatibility_date": "2026-02-24",
+	"triggers": {
+		"crons": ["0 1,12,18 * * *"], // Sync 3x daily
+	},
+	"workflows": [
+		{
+			"name": "backfill-workflow",
+			"binding": "BACKFILL_WORKFLOW",
+			"class_name": "BackfillWorkflow",
+		},
+	],
+	"d1_databases": [
+		{
+			"binding": "oura_db",
+			"database_id": "YOUR_D1_DATABASE_ID",
+		},
+	],
+	"kv_namespaces": [
+		{
+			"binding": "OURA_CACHE",
+			"id": "YOUR_KV_NAMESPACE_ID",
+		},
+	],
+	"analytics_engine_datasets": [
+		{
+			"binding": "OURA_ANALYTICS",
+			"dataset": "oura_metrics",
+		},
+	],
 }
 ```
 
 ### Cloudflare Bindings
 
-| Binding                | Type             | Purpose                              |
-| ---------------------- | ---------------- | ------------------------------------ |
-| `oura_db`              | D1 Database      | Primary data storage                 |
-| `OURA_CACHE`           | KV Namespace     | SQL query + OpenAPI spec caching     |
-| `BACKFILL_WORKFLOW`    | Workflow         | Durable backfill orchestration       |
-| `OURA_ANALYTICS`       | Analytics Engine | Query and auth metrics               |
-| `RATE_LIMITER`         | Rate Limit       | Public endpoint rate limiting        |
-| `AUTH_RATE_LIMITER`    | Rate Limit       | Authenticated endpoint rate limiting |
-| `UNAUTH_RATE_LIMITER`  | Rate Limit       | Unauthenticated rate limiting        |
+| Binding               | Type             | Purpose                              |
+| --------------------- | ---------------- | ------------------------------------ |
+| `oura_db`             | D1 Database      | Primary data storage                 |
+| `OURA_CACHE`          | KV Namespace     | SQL query + OpenAPI spec caching     |
+| `BACKFILL_WORKFLOW`   | Workflow         | Durable backfill orchestration       |
+| `OURA_ANALYTICS`      | Analytics Engine | Query and auth metrics               |
+| `RATE_LIMITER`        | Rate Limit       | Public endpoint rate limiting        |
+| `AUTH_RATE_LIMITER`   | Rate Limit       | Authenticated endpoint rate limiting |
+| `UNAUTH_RATE_LIMITER` | Rate Limit       | Unauthenticated rate limiting        |
 
 ## Cloudflare Access (Optional)
 
@@ -497,11 +497,11 @@ ORDER BY day
 
 ### Rate Limiting
 
-| Tier             | Limit            | Scope                          |
-| ---------------- | ---------------- | ------------------------------ |
-| Public           | 1 req/60s        | `/health`, backfill            |
-| Unauthenticated  | 10 req/60s       | Unknown endpoints              |
-| Authenticated    | 3000 req/60s     | All `/api/*` endpoints         |
+| Tier            | Limit        | Scope                  |
+| --------------- | ------------ | ---------------------- |
+| Public          | 1 req/60s    | `/health`, backfill    |
+| Unauthenticated | 10 req/60s   | Unknown endpoints      |
+| Authenticated   | 3000 req/60s | All `/api/*` endpoints |
 
 ### Security Headers
 
