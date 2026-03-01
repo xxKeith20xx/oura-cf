@@ -1,15 +1,23 @@
+import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from 'cloudflare:workers';
+
+// Build-time constant injected via wrangler.jsonc `define` (mirrors package.json version)
+declare const __APP_VERSION__: string;
+
 export interface Env {
 	oura_db: D1Database;
 	RATE_LIMITER: RateLimit;
 	AUTH_RATE_LIMITER: RateLimit;
 	UNAUTH_RATE_LIMITER: RateLimit; // New: Rate limiter for unauthenticated requests
 	OURA_CACHE: KVNamespace;
+	OURA_ANALYTICS?: AnalyticsEngineDataset; // Analytics Engine for query/auth metrics
 	GRAFANA_SECRET: string;
 	ADMIN_SECRET?: string; // Separate secret for manual admin operations (backfill, etc.)
 	OURA_CLIENT_ID?: string;
 	OURA_CLIENT_SECRET?: string;
 	OURA_SCOPES?: string;
 	OURA_PAT?: string;
+	BACKFILL_WORKFLOW: Workflow; // Workflows binding for durable backfill orchestration
+	ALLOWED_ORIGINS?: string; // Comma-separated CORS origins (default: https://oura.keith20.dev)
 	MAX_QUERY_ROWS?: string; // Maximum rows to return from SQL queries (default: 50000)
 	QUERY_TIMEOUT_MS?: string; // Query timeout in milliseconds (default: 10000)
 }
@@ -58,33 +66,18 @@ let tokenCache: { token: string; expiresAt: number } | null = null;
 
 // Security: Constant-time token comparison to prevent timing attacks
 async function constantTimeCompare(a: string, b: string): Promise<boolean> {
-	if (a.length !== b.length) {
-		// Still compare something to maintain constant time even on length mismatch
-		const dummy = 'x'.repeat(Math.max(a.length, b.length));
-		await crypto.subtle.digest('SHA-256', new TextEncoder().encode(dummy));
-		return false;
-	}
-
 	const encoder = new TextEncoder();
 	const aBytes = encoder.encode(a);
 	const bBytes = encoder.encode(b);
 
-	// Use HMAC for constant-time comparison
-	const key = await crypto.subtle.importKey('raw', aBytes, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+	// Hash both to fixed-length buffers so timingSafeEqual always compares equal-length inputs,
+	// avoiding length-based timing leaks when a and b have different lengths.
+	const [aHash, bHash] = await Promise.all([
+		crypto.subtle.digest('SHA-256', aBytes),
+		crypto.subtle.digest('SHA-256', bBytes),
+	]);
 
-	const aSignature = await crypto.subtle.sign('HMAC', key, aBytes);
-	const bSignature = await crypto.subtle.sign('HMAC', key, bBytes);
-
-	// Compare the signatures
-	const aArray = new Uint8Array(aSignature);
-	const bArray = new Uint8Array(bSignature);
-
-	let result = 0;
-	for (let i = 0; i < aArray.length; i++) {
-		result |= aArray[i] ^ bArray[i];
-	}
-
-	return result === 0;
+	return crypto.subtle.timingSafeEqual(aHash, bHash);
 }
 
 // Security: Generate composite rate limit key to prevent collision behind proxies
@@ -107,6 +100,29 @@ async function getRateLimitKey(clientIP: string, authHeader: string | null, type
 	return baseKey;
 }
 
+// Cache: Generate a short hash key for SQL query + params to use as KV cache key
+async function hashSqlQuery(sql: string, params: unknown[]): Promise<string> {
+	const data = JSON.stringify({ sql, params });
+	const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(data));
+	return Array.from(new Uint8Array(hash))
+		.map((b) => b.toString(16).padStart(2, '0'))
+		.join('')
+		.slice(0, 16);
+}
+
+// Cache: Flush all sql: prefixed KV entries after a data sync so dashboards see fresh data
+async function flushSqlCache(kv: KVNamespace): Promise<number> {
+	let deleted = 0;
+	let cursor: string | undefined;
+	do {
+		const list = await kv.list({ prefix: 'sql:', limit: 1000, cursor });
+		await Promise.all(list.keys.map((k) => kv.delete(k.name)));
+		deleted += list.keys.length;
+		cursor = list.list_complete ? undefined : list.cursor;
+	} while (cursor);
+	return deleted;
+}
+
 // Security: Validate Bearer token against multiple secrets (supports rotation)
 async function validateBearerToken(authHeader: string | null, env: Env): Promise<boolean> {
 	if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -127,17 +143,16 @@ async function validateBearerToken(authHeader: string | null, env: Env): Promise
 	return false;
 }
 
-// Security: Log authentication attempt
-function logAuthAttempt(success: boolean, request: Request, details?: string): void {
+// Security: Log authentication attempt and write to Analytics Engine
+function logAuthAttempt(success: boolean, request: Request, details?: string, analytics?: AnalyticsEngineDataset): void {
 	const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
 	const userAgent = request.headers.get('User-Agent') || 'unknown';
-	const cfData = request.cf as any;
+	const cfData = request.cf as IncomingRequestCfProperties | undefined;
 
 	console.log(
 		JSON.stringify({
 			type: 'auth_attempt',
 			success,
-			timestamp: new Date().toISOString(),
 			ip: clientIP,
 			country: cfData?.country || 'unknown',
 			userAgent: userAgent.slice(0, 200),
@@ -145,18 +160,33 @@ function logAuthAttempt(success: boolean, request: Request, details?: string): v
 			details: details || undefined,
 		}),
 	);
+
+	if (analytics) {
+		analytics.writeDataPoint({
+			indexes: ['auth'],
+			doubles: [success ? 1 : 0],
+			blobs: [clientIP, (cfData?.country as string) || 'unknown', new URL(request.url).pathname, details || ''],
+		});
+	}
 }
 
-// Security: Log SQL query execution
-function logSqlQuery(request: Request, sql: string, params: unknown[], executionTimeMs: number, rowCount: number, error?: string): void {
+// Security: Log SQL query execution and write to Analytics Engine
+function logSqlQuery(
+	request: Request,
+	sql: string,
+	params: unknown[],
+	executionTimeMs: number,
+	rowCount: number,
+	error?: string,
+	analytics?: AnalyticsEngineDataset,
+): void {
 	const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
 
 	console.log(
 		JSON.stringify({
 			type: 'sql_query',
-			timestamp: new Date().toISOString(),
 			ip: clientIP,
-			sqlPreview: sql.slice(0, 200), // Log first 200 chars
+			sqlPreview: sql.slice(0, 200),
 			sqlLength: sql.length,
 			paramCount: params.length,
 			executionTimeMs,
@@ -164,6 +194,15 @@ function logSqlQuery(request: Request, sql: string, params: unknown[], execution
 			error: error || undefined,
 		}),
 	);
+
+	// Write to Analytics Engine (non-blocking, fire-and-forget)
+	if (analytics) {
+		analytics.writeDataPoint({
+			indexes: ['sql_query'],
+			doubles: [executionTimeMs, rowCount, sql.length, error ? 1 : 0],
+			blobs: [sql.slice(0, 200), clientIP, rowCount === -1 ? 'cache_hit' : 'cache_miss', error || ''],
+		});
+	}
 }
 
 // Validation constants
@@ -173,76 +212,18 @@ const OPENAPI_CACHE_TTL = 86400; // 24 hours
 const OURA_DOCS_URL = 'https://cloud.ouraring.com/v2/docs';
 const OURA_OPENAPI_FALLBACK_URL = 'https://cloud.ouraring.com/v2/static/json/openapi-1.28.json';
 const RESPONSE_CACHE_TTL = 300; // 5 minutes (use 'private' cache for authenticated endpoints)
+const SQL_KV_CACHE_TTL = 21600; // 6 hours KV cache for SQL query results (data changes ~2-3x/day via cron)
+const STATS_KV_CACHE_TTL = 21600; // 6 hours KV cache for stats/metadata queries
 const DEFAULT_MAX_QUERY_ROWS = 50_000; // Default max rows for SQL queries
 const DEFAULT_QUERY_TIMEOUT_MS = 10_000; // Default query timeout (10 seconds)
 const MAX_PARAMS = 100; // Maximum SQL parameters
 const MAX_BODY_SIZE = 1_048_576; // 1MB max request body size
+const DEFAULT_CORS_ORIGINS = ['https://oura.keith20.dev', 'http://localhost:3000', 'http://localhost:8787'];
 
-// SQL Whitelist: Allowed keywords and functions for read-only queries
-const ALLOWED_SQL_KEYWORDS = new Set([
-	'select',
-	'from',
-	'where',
-	'and',
-	'or',
-	'not',
-	'in',
-	'is',
-	'null',
-	'like',
-	'between',
-	'order',
-	'by',
-	'group',
-	'having',
-	'limit',
-	'offset',
-	'join',
-	'left',
-	'right',
-	'inner',
-	'outer',
-	'cross',
-	'on',
-	'as',
-	'distinct',
-	'union',
-	'all',
-	'case',
-	'when',
-	'then',
-	'else',
-	'end',
-	'cast',
-]);
-
-const ALLOWED_SQL_FUNCTIONS = new Set([
-	'count',
-	'sum',
-	'avg',
-	'min',
-	'max',
-	'abs',
-	'round',
-	'ceil',
-	'floor',
-	'length',
-	'substr',
-	'trim',
-	'ltrim',
-	'rtrim',
-	'upper',
-	'lower',
-	'coalesce',
-	'nullif',
-	'ifnull',
-	'date',
-	'time',
-	'datetime',
-	'julianday',
-	'strftime',
-	'printf',
-]);
+// Module-level CORS origins, set at the start of each fetch() from env.ALLOWED_ORIGINS.
+// Safe because Workers isolates process fetch() requests sequentially, and waitUntil()
+// callbacks don't call withCors. If concurrency assumptions change, pass origins explicitly.
+let _corsOrigins: string[] = DEFAULT_CORS_ORIGINS;
 
 // Circuit breaker state (in-memory, resets on Worker restart)
 const circuitBreakerState = {
@@ -287,7 +268,6 @@ async function withCircuitBreaker<T>(fn: () => Promise<T>, operationName: string
 			console.error('Circuit breaker opened due to repeated failures', {
 				operation: operationName,
 				failures: circuitBreakerState.failures,
-				timestamp: new Date().toISOString(),
 			});
 			circuitBreakerState.state = 'open';
 		}
@@ -311,7 +291,6 @@ async function retryWithBackoff<T>(fn: () => Promise<T>, options: { maxRetries: 
 				console.error('Cron sync failed after max retries', {
 					attempts: attempt + 1,
 					error: lastError.message,
-					timestamp: new Date().toISOString(),
 				});
 				throw lastError;
 			}
@@ -322,7 +301,6 @@ async function retryWithBackoff<T>(fn: () => Promise<T>, options: { maxRetries: 
 				maxRetries: maxRetries + 1,
 				delayMs: delay,
 				error: lastError.message,
-				timestamp: new Date().toISOString(),
 			});
 
 			await new Promise((resolve) => setTimeout(resolve, delay));
@@ -342,12 +320,38 @@ export default {
 					await updateTableStats(env);
 				},
 				{ maxRetries: 3, baseDelay: 5000, maxDelay: 60000 },
-			),
+			).then(async () => {
+				// Flush cached query results so dashboards see fresh data immediately.
+				// Isolated from retry: a KV failure here should not re-trigger data sync.
+				if (env.OURA_CACHE) {
+					try {
+						const flushed = await flushSqlCache(env.OURA_CACHE);
+						console.log('SQL cache flushed after cron sync', { entriesFlushed: flushed });
+					} catch (err) {
+						console.warn('Cache flush failed after cron sync (non-fatal)', {
+							error: err instanceof Error ? err.message : String(err),
+						});
+					}
+				}
+			}),
+		);
+		// Clean up expired OAuth states (abandoned flows)
+		ctx.waitUntil(
+			env.oura_db
+				.prepare('DELETE FROM oura_oauth_states WHERE created_at < ?')
+				.bind(Date.now() - 24 * 60 * 60_000) // older than 24 hours
+				.run()
+				.catch((err) => console.warn('OAuth state cleanup failed (non-fatal)', { error: String(err) })),
 		);
 	},
 
 	// 2. HTTP Fetch: API and Manual Backfill
 	async fetch(request: Request, env: Env, ctx: ExecutionContext) {
+		// Parse configurable CORS origins once per request (env.ALLOWED_ORIGINS is comma-separated)
+		_corsOrigins = env.ALLOWED_ORIGINS
+			? env.ALLOWED_ORIGINS.split(',').map((o) => o.trim()).filter(Boolean)
+			: DEFAULT_CORS_ORIGINS;
+
 		const url = new URL(request.url);
 		const auth = request.headers.get('Authorization');
 		const origin = request.headers.get('Origin');
@@ -392,7 +396,7 @@ export default {
 				Response.json({
 					status: 'ok',
 					timestamp: new Date().toISOString(),
-					version: '1.1.0',
+					version: __APP_VERSION__,
 					request: {
 						headers: headers,
 						method: request.method,
@@ -492,16 +496,16 @@ export default {
 			const { success: unauthRateLimit } = await env.UNAUTH_RATE_LIMITER.limit({ key: unauthRateLimitKey });
 
 			if (!unauthRateLimit) {
-				logAuthAttempt(false, request, 'Rate limit exceeded (unauthenticated)');
+				logAuthAttempt(false, request, 'Rate limit exceeded (unauthenticated)', env.OURA_ANALYTICS);
 				return withCors(Response.json({ error: 'Rate limit exceeded. Please wait before retrying.' }, { status: 429 }), origin);
 			}
 
-			logAuthAttempt(false, request, 'Invalid or missing token');
+			logAuthAttempt(false, request, 'Invalid or missing token', env.OURA_ANALYTICS);
 			return withCors(Response.json({ error: 'Unauthorized' }, { status: 401 }), origin);
 		}
 
 		// Authentication successful - log it
-		logAuthAttempt(true, request);
+		logAuthAttempt(true, request, undefined, env.OURA_ANALYTICS);
 
 		// Rate limit authenticated endpoints to prevent abuse if token leaks
 		// Allows 3000 requests per minute per IP + token combination (50 per second sustained)
@@ -574,41 +578,113 @@ export default {
 			const resourcesParam = url.searchParams.get('resources');
 			const resourceFilter = parseResourceFilter(resourcesParam);
 
-			// Choose sync strategy based on workload size to avoid waitUntil timeout
-			// waitUntil has 30-second limit after response; large syncs may exceed this
-			if (totalDays <= 1) {
-				// Small sync: use waitUntil (fast response, completes in background)
-				ctx.waitUntil(
-					Promise.all([
-						syncData(env, totalDays, offsetDays, resourceFilter),
-						updateTableStats(env), // Also update stats
-					]),
+			// Dispatch to Cloudflare Workflow for durable, retryable execution.
+			// The Workflow runs each resource as an isolated step with its own retry budget,
+			// eliminating CPU/subrequest limit concerns for large backfills.
+			try {
+				const params: BackfillParams = {
+					totalDays,
+					offsetDays,
+					resources: resourceFilter ? [...resourceFilter] : undefined,
+				};
+
+				// Use a deterministic ID so duplicate requests within the rate limit window
+				// are idempotent (Workflow.create throws if the ID already exists)
+				const instanceId = `backfill-${totalDays}d-offset${offsetDays}-${Date.now()}`;
+
+				const instance = await env.BACKFILL_WORKFLOW.create({
+					id: instanceId,
+					params,
+				});
+
+				console.log('Backfill workflow dispatched', {
+					instanceId: instance.id,
+					totalDays,
+					offsetDays,
+					resourceFilter: resourceFilter ? [...resourceFilter] : 'all',
+				});
+
+				return withCors(
+					Response.json(
+						{
+							message: 'Backfill workflow started.',
+							instanceId: instance.id,
+							statusUrl: `/backfill/status?id=${encodeURIComponent(instance.id)}`,
+							totalDays,
+							offsetDays,
+						},
+						{ status: 202 },
+					),
+					origin,
 				);
-				return withCors(Response.json({ message: 'Backfill initiated in background.' }, { status: 202 }), origin);
-			} else {
-				// Large backfill: synchronous (client waits, but guaranteed completion)
-				try {
-					await syncData(env, totalDays, offsetDays, resourceFilter);
-					await updateTableStats(env);
-					return withCors(Response.json({ message: `Backfill completed: ${totalDays} days synced.` }, { status: 200 }), origin);
-				} catch (err) {
-					return withCors(
-						Response.json(
-							{
-								error: 'Backfill failed',
-								details: err instanceof Error ? err.message : String(err).slice(0, 500),
-							},
-							{ status: 500 },
-						),
-						origin,
-					);
-				}
+			} catch (err) {
+				console.error('Failed to dispatch backfill workflow', {
+					error: err instanceof Error ? err.message : String(err),
+				});
+				return withCors(
+					Response.json(
+						{
+							error: 'Failed to start backfill workflow',
+							details: err instanceof Error ? err.message : String(err).slice(0, 500),
+						},
+						{ status: 500 },
+					),
+					origin,
+				);
+			}
+		}
+
+		if (url.pathname === '/backfill/status') {
+			const instanceId = url.searchParams.get('id');
+			if (!instanceId) {
+				return withCors(
+					Response.json({ error: 'Missing required parameter: id' }, { status: 400 }),
+					origin,
+				);
+			}
+
+			try {
+				const instance = await env.BACKFILL_WORKFLOW.get(instanceId);
+				const status = await instance.status();
+
+				return withCors(
+					Response.json({
+						instanceId,
+						status: status.status,
+						error: status.error || undefined,
+						output: status.output || undefined,
+					}),
+					origin,
+				);
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				// Workflow.get throws if the instance doesn't exist
+				const isNotFound = message.includes('not found') || message.includes('does not exist');
+				return withCors(
+					Response.json(
+						{
+							error: isNotFound ? 'Workflow instance not found' : 'Failed to fetch workflow status',
+							details: message.slice(0, 500),
+						},
+						{ status: isNotFound ? 404 : 500 },
+					),
+					origin,
+				);
 			}
 		}
 
 		if (url.pathname === '/api/daily_summaries') {
 			const start = url.searchParams.get('start');
 			const end = url.searchParams.get('end');
+			const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+
+			if (start && !dateRegex.test(start)) {
+				return withCors(Response.json({ error: 'Invalid start date format (expected YYYY-MM-DD)' }, { status: 400 }), origin);
+			}
+			if (end && !dateRegex.test(end)) {
+				return withCors(Response.json({ error: 'Invalid end date format (expected YYYY-MM-DD)' }, { status: 400 }), origin);
+			}
+
 			const where: string[] = [];
 			const args: unknown[] = [];
 
@@ -667,13 +743,21 @@ export default {
 
 				// Validation: Read-only queries only
 				if (!isReadOnlySql(sql)) {
-					logSqlQuery(request, sql, params, Date.now() - queryStartTime, 0, 'Query blocked: not read-only');
+					logSqlQuery(request, sql, params, Date.now() - queryStartTime, 0, 'Query blocked: not read-only', env.OURA_ANALYTICS);
 					return withCors(Response.json({ error: 'Only read-only SQL queries are allowed' }, { status: 400 }), origin);
 				}
 
 				// Validation: Parameter count limit
 				if (params.length > MAX_PARAMS) {
 					return withCors(Response.json({ error: `Too many parameters (max ${MAX_PARAMS})` }, { status: 400 }), origin);
+				}
+
+				// Validation: Each param must be a bindable primitive (string, number, boolean, null)
+				for (let i = 0; i < params.length; i++) {
+					const p = params[i];
+					if (p !== null && typeof p !== 'string' && typeof p !== 'number' && typeof p !== 'boolean') {
+						return withCors(Response.json({ error: `Invalid parameter type at index ${i}: expected string, number, boolean, or null` }, { status: 400 }), origin);
+					}
 				}
 
 				// Security: Analyze query complexity
@@ -683,13 +767,41 @@ export default {
 						complexity: complexity.score,
 						warnings: complexity.warnings,
 						sqlPreview: sql.slice(0, 100),
-						timestamp: new Date().toISOString(),
 					});
 				}
 
+				// Cache: Check KV for cached result before hitting D1
+				// Detect stats/metadata queries (COUNT(*) across all tables) for longer cache TTL
+				const isStatsQuery = /COUNT\(\*\).*FROM\s+heart_rate_samples/i.test(sql) && /UNION\s+ALL/i.test(sql);
+				const kvCacheTtl = isStatsQuery ? STATS_KV_CACHE_TTL : SQL_KV_CACHE_TTL;
+				const cacheKey = `sql:${await hashSqlQuery(sql, params)}`;
+
+				if (env.OURA_CACHE) {
+					const cached = await env.OURA_CACHE.get(cacheKey);
+					if (cached) {
+						const executionTime = Date.now() - queryStartTime;
+						logSqlQuery(request, sql, params, executionTime, -1, undefined, env.OURA_ANALYTICS); // -1 = cache hit
+						return withCors(
+							new Response(cached, {
+								headers: {
+									'Content-Type': 'application/json',
+									'Cache-Control': `private, max-age=${kvCacheTtl}`,
+									'X-Content-Type-Options': 'nosniff',
+									'X-Frame-Options': 'DENY',
+									'X-Query-Time-Ms': executionTime.toString(),
+									'X-Cache': 'HIT',
+								},
+							}),
+							origin,
+						);
+					}
+				}
+
 				// Get configuration with defaults
-				const maxRows = env.MAX_QUERY_ROWS ? parseInt(env.MAX_QUERY_ROWS, 10) : DEFAULT_MAX_QUERY_ROWS;
-				const timeoutMs = env.QUERY_TIMEOUT_MS ? parseInt(env.QUERY_TIMEOUT_MS, 10) : DEFAULT_QUERY_TIMEOUT_MS;
+				const parsedMaxRows = env.MAX_QUERY_ROWS ? parseInt(env.MAX_QUERY_ROWS, 10) : NaN;
+				const maxRows = Number.isFinite(parsedMaxRows) ? parsedMaxRows : DEFAULT_MAX_QUERY_ROWS;
+				const parsedTimeout = env.QUERY_TIMEOUT_MS ? parseInt(env.QUERY_TIMEOUT_MS, 10) : NaN;
+				const timeoutMs = Number.isFinite(parsedTimeout) ? parsedTimeout : DEFAULT_QUERY_TIMEOUT_MS;
 
 				// Inject or cap LIMIT to prevent D1 from reading unlimited rows.
 				// This avoids reading rows that would just be rejected by the post-query row-count check.
@@ -734,7 +846,7 @@ export default {
 
 				// Security: Enforce row limit
 				if (rowCount > maxRows) {
-					logSqlQuery(request, sql, params, executionTime, rowCount, `Too many rows returned: ${rowCount}`);
+					logSqlQuery(request, sql, params, executionTime, rowCount, `Too many rows returned: ${rowCount}`, env.OURA_ANALYTICS);
 					return withCors(
 						Response.json(
 							{
@@ -748,24 +860,28 @@ export default {
 				}
 
 				// Log successful query
-				logSqlQuery(request, sql, params, executionTime, rowCount);
+				logSqlQuery(request, sql, params, executionTime, rowCount, undefined, env.OURA_ANALYTICS);
 
-				// Detect stats/metadata queries (COUNT(*) across all tables)
-				// These queries scan millions of rows but results change infrequently
-				const isStatsQuery = /COUNT\(\*\).*FROM\s+heart_rate_samples/i.test(sql) && /UNION\s+ALL/i.test(sql);
+				// Use longer HTTP cache for stats queries (1 hour vs 5 minutes)
+				const httpCacheTTL = isStatsQuery ? 3600 : RESPONSE_CACHE_TTL;
 
-				// Use longer cache for stats queries (1 hour vs 5 minutes)
-				const cacheTTL = isStatsQuery ? 3600 : RESPONSE_CACHE_TTL;
+				const responseBody = JSON.stringify({ results: result.results, meta: result.meta });
+
+				// Cache: Store result in KV for subsequent requests (non-blocking)
+				if (env.OURA_CACHE) {
+					ctx.waitUntil(env.OURA_CACHE.put(cacheKey, responseBody, { expirationTtl: kvCacheTtl }));
+				}
 
 				return withCors(
-					new Response(JSON.stringify({ results: result.results, meta: result.meta }), {
+					new Response(responseBody, {
 						headers: {
 							'Content-Type': 'application/json',
-							'Cache-Control': `private, max-age=${cacheTTL}`,
+							'Cache-Control': `private, max-age=${httpCacheTTL}`,
 							'X-Content-Type-Options': 'nosniff',
 							'X-Frame-Options': 'DENY',
 							'X-Query-Time-Ms': executionTime.toString(),
 							'X-Row-Count': rowCount.toString(),
+							'X-Cache': 'MISS',
 						},
 					}),
 					origin,
@@ -775,7 +891,7 @@ export default {
 				const errorMessage = err instanceof Error ? err.message : String(err);
 
 				// Log failed query
-				logSqlQuery(request, sql, params, executionTime, 0, errorMessage);
+				logSqlQuery(request, sql, params, executionTime, 0, errorMessage, env.OURA_ANALYTICS);
 
 				// Security: Don't leak detailed database errors to clients
 				if (errorMessage.includes('timeout')) {
@@ -831,9 +947,7 @@ export default {
 
 				// Fallback: compute stats on-demand (slow but accurate)
 				// This will only run if table_stats is empty (first time)
-				console.warn('table_stats empty, computing on-demand (slow)', {
-					timestamp: new Date().toISOString(),
-				});
+				console.warn('table_stats empty, computing on-demand (slow)');
 
 				const stats = await env.oura_db
 					.prepare(
@@ -942,7 +1056,6 @@ async function syncData(env: Env, totalDays: number, offsetDays = 0, resourceFil
 					resource: r.resource,
 					error: err instanceof Error ? err.message : String(err),
 					stack: err instanceof Error ? err.stack : undefined,
-					timestamp: new Date().toISOString(),
 				});
 				return { resource: r.resource, success: false, error: err };
 			}
@@ -962,7 +1075,6 @@ async function syncData(env: Env, totalDays: number, offsetDays = 0, resourceFil
 		totalRequests,
 		durationMs: duration,
 		durationSec: (duration / 1000).toFixed(2),
-		timestamp: new Date().toISOString(),
 	});
 
 	// Log failed resources for debugging
@@ -974,8 +1086,12 @@ async function syncData(env: Env, totalDays: number, offsetDays = 0, resourceFil
 		console.warn('Failed resources', {
 			resources: failedResources,
 			count: failedResources.length,
-			timestamp: new Date().toISOString(),
 		});
+	}
+
+	// Throw if majority of resources failed so retryWithBackoff can actually retry
+	if (resources.length > 0 && failed > resources.length / 2) {
+		throw new Error(`Sync failed: ${failed}/${resources.length} resources failed (${failedResources.join(', ')})`);
 	}
 }
 
@@ -1025,9 +1141,16 @@ const RESOURCE_ALIASES: Record<string, string> = {
 	vO2_max: 'vo2_max',
 };
 
-async function saveToD1(env: Env, endpoint: string, data: any[]) {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function saveToD1(env: Env, endpoint: string, data: Record<string, any>[]) {
 	// Normalize endpoint name to handle API version renames
 	const normalizedEndpoint = RESOURCE_ALIASES[endpoint] ?? endpoint;
+	const KNOWN_ENDPOINTS = new Set([
+		'daily_readiness', 'daily_sleep', 'daily_activity', 'daily_stress',
+		'daily_resilience', 'daily_spo2', 'daily_cardiovascular_age', 'vo2_max',
+		'sleep', 'heartrate', 'workout', 'session', 'tag', 'enhanced_tag',
+		'rest_mode_period', 'sleep_time',
+	]);
 
 	// daily_readiness -> daily_summaries (readiness fields)
 	if (normalizedEndpoint === 'daily_readiness') {
@@ -1443,6 +1566,15 @@ async function saveToD1(env: Env, endpoint: string, data: any[]) {
 		}
 		if (stmts.length) await env.oura_db.batch(stmts);
 	}
+
+	// Warn if a new Oura API endpoint was discovered but has no D1 handler
+	if (!KNOWN_ENDPOINTS.has(normalizedEndpoint)) {
+		console.warn('saveToD1: unhandled endpoint, data discarded', {
+			endpoint: normalizedEndpoint,
+			originalEndpoint: endpoint,
+			recordCount: data.length,
+		});
+	}
 }
 
 function toInt(v: unknown): number | null {
@@ -1471,7 +1603,6 @@ async function ingestResource(env: Env, r: OuraResource, window: { startDate: st
 		console.error('Failed to get Oura access token', {
 			error: err instanceof Error ? err.message : String(err),
 			stack: err instanceof Error ? err.stack : undefined,
-			timestamp: new Date().toISOString(),
 			resource: r.resource,
 		});
 		// Re-throw so syncData sees this as a failed resource instead of silent success
@@ -1495,20 +1626,18 @@ async function ingestResource(env: Env, r: OuraResource, window: { startDate: st
 				status: res.status,
 				statusText: res.statusText,
 				responseBody: text.slice(0, 500),
-				timestamp: new Date().toISOString(),
 				url: url,
 			});
-			return;
+			throw new Error(`Oura API ${res.status} for ${r.resource}: ${res.statusText}`);
 		}
 
 		const json = await res.json().catch(() => null);
 		if (!json || typeof json !== 'object') {
 			console.error('Invalid JSON response from Oura', {
 				resource: r.resource,
-				timestamp: new Date().toISOString(),
 				url: url,
 			});
-			return;
+			throw new Error(`Invalid JSON response from Oura for ${r.resource}`);
 		}
 
 		const apiResponse = json as OuraApiResponse<unknown>;
@@ -1525,7 +1654,6 @@ async function ingestResource(env: Env, r: OuraResource, window: { startDate: st
 			console.warn('Oura pagination safeguard triggered', {
 				resource: r.resource,
 				pageCount: page,
-				timestamp: new Date().toISOString(),
 				message: 'Exceeded maximum pagination limit of 1000 pages',
 			});
 			return;
@@ -1571,7 +1699,6 @@ async function discoverOpenApiSpecUrl(): Promise<string> {
 		if (!res.ok) {
 			console.warn('Oura docs page returned non-200, using fallback spec URL', {
 				status: res.status,
-				timestamp: new Date().toISOString(),
 			});
 			return OURA_OPENAPI_FALLBACK_URL;
 		}
@@ -1581,20 +1708,14 @@ async function discoverOpenApiSpecUrl(): Promise<string> {
 		if (match?.[1]) {
 			const specPath = match[1];
 			const specUrl = specPath.startsWith('http') ? specPath : `https://cloud.ouraring.com${specPath}`;
-			console.log('Discovered OpenAPI spec URL from docs page', {
-				specUrl,
-				timestamp: new Date().toISOString(),
-			});
+			console.log('Discovered OpenAPI spec URL from docs page', { specUrl });
 			return specUrl;
 		}
-		console.warn('Could not parse spec-url from Oura docs page, using fallback', {
-			timestamp: new Date().toISOString(),
-		});
+		console.warn('Could not parse spec-url from Oura docs page, using fallback');
 		return OURA_OPENAPI_FALLBACK_URL;
 	} catch (err) {
 		console.warn('Failed to fetch Oura docs page for spec discovery, using fallback', {
 			error: err instanceof Error ? err.message : String(err),
-			timestamp: new Date().toISOString(),
 		});
 		return OURA_OPENAPI_FALLBACK_URL;
 	}
@@ -1610,7 +1731,6 @@ async function loadOuraResourcesFromOpenApi(env: Env): Promise<OuraResource[]> {
 	} catch (err) {
 		console.warn('Failed to read from KV cache', {
 			error: err instanceof Error ? err.message : String(err),
-			timestamp: new Date().toISOString(),
 		});
 	}
 
@@ -1623,10 +1743,9 @@ async function loadOuraResourcesFromOpenApi(env: Env): Promise<OuraResource[]> {
 			specUrl,
 			status: res.status,
 			statusText: res.statusText,
-			timestamp: new Date().toISOString(),
 			message: 'Unable to load Oura API resource definitions. The spec URL may have changed.',
 		});
-		return [];
+		throw new Error(`Failed to fetch Oura OpenAPI spec: ${res.status} ${res.statusText} from ${specUrl}`);
 	}
 	const spec = (await res.json().catch(() => null)) as any;
 	const paths = spec?.paths && typeof spec.paths === 'object' ? spec.paths : {};
@@ -1668,7 +1787,6 @@ async function loadOuraResourcesFromOpenApi(env: Env): Promise<OuraResource[]> {
 		specUrl,
 		resourceCount: out.length,
 		resources: out.map((r) => r.resource),
-		timestamp: new Date().toISOString(),
 	});
 
 	// Cache in KV for 24 hours
@@ -1679,7 +1797,6 @@ async function loadOuraResourcesFromOpenApi(env: Env): Promise<OuraResource[]> {
 	} catch (err) {
 		console.warn('Failed to write to KV cache', {
 			error: err instanceof Error ? err.message : String(err),
-			timestamp: new Date().toISOString(),
 		});
 	}
 
@@ -1713,7 +1830,7 @@ function isReadOnlySql(sql: string): boolean {
 		/\bdrop\b/,
 		/\balter\b/,
 		/\bcreate\b/,
-		/\breplace\b/,
+		/\breplace\s+into\b/, // Only block REPLACE INTO (write op), not REPLACE() string function
 		/\bvacuum\b/,
 		/\bpragma\b/,
 		/\battach\b/,
@@ -2007,29 +2124,160 @@ async function updateTableStats(env: Env): Promise<void> {
 		}
 
 		console.log('Table stats updated successfully', {
-			timestamp: new Date().toISOString(),
 			tables_updated: updateStatements.length,
 		});
 	} catch (err) {
 		console.error('Failed to update table stats', {
 			error: err instanceof Error ? err.message : String(err),
-			timestamp: new Date().toISOString(),
 		});
+	}
+}
+
+// ─── Backfill Workflow ───────────────────────────────────────────────────────
+// Durable, retryable backfill orchestration via Cloudflare Workflows.
+// Each resource sync runs as an isolated step with its own retry budget,
+// so a transient Oura API failure for one resource doesn't block the rest.
+
+type BackfillParams = {
+	totalDays: number;
+	offsetDays: number;
+	resources?: string[]; // Optional subset of resources to sync
+};
+
+type BackfillResourceResult = {
+	resource: string;
+	success: boolean;
+	requests: number;
+	error?: string;
+};
+
+export class BackfillWorkflow extends WorkflowEntrypoint<Env, BackfillParams> {
+	override async run(event: WorkflowEvent<BackfillParams>, step: WorkflowStep) {
+		const { totalDays, offsetDays, resources: resourceNames } = event.payload;
+
+		// Step 1: Discover available resources from Oura OpenAPI spec
+		const allResources = await step.do(
+			'discover-resources',
+			{ retries: { limit: 3, delay: '5 seconds', backoff: 'exponential' }, timeout: '30 seconds' },
+			async () => {
+				const loaded = await loadOuraResourcesFromOpenApi(this.env);
+				// Return plain objects (must be serializable)
+				return loaded.map((r) => ({
+					resource: r.resource,
+					path: r.path,
+					queryMode: r.queryMode,
+					paginated: r.paginated,
+				}));
+			},
+		);
+
+		// Filter to requested resources if specified
+		const resourceFilter = resourceNames ? new Set(resourceNames) : null;
+		const resources = resourceFilter ? allResources.filter((r) => resourceFilter.has(r.resource)) : allResources;
+
+		console.log('Backfill workflow started', {
+			instanceId: event.instanceId,
+			totalDays,
+			offsetDays,
+			resourceCount: resources.length,
+			filtered: !!resourceFilter,
+		});
+
+		// Step 2: Sync each resource as its own durable step
+		// Each step is independently retryable — if heartrate fails, sleep still completes
+		const results: BackfillResourceResult[] = [];
+
+		for (const r of resources) {
+			const result = await step.do(
+				`sync:${r.resource}`,
+				{
+					retries: { limit: 3, delay: '10 seconds', backoff: 'exponential' },
+					// Generous timeout: large resources (heartrate) with many chunks can take minutes
+					timeout: '5 minutes',
+				},
+				async () => {
+					try {
+						if (r.queryMode === 'none') {
+							await ingestResource(this.env, r, null);
+							return { resource: r.resource, success: true, requests: 1 } satisfies BackfillResourceResult;
+						}
+
+						const chunkDays = getChunkDaysForResource(r);
+						let requestCount = 0;
+
+						for (let i = 0; i < totalDays; i += chunkDays) {
+							const windowDays = Math.min(chunkDays, totalDays - i);
+							const start = new Date(Date.now() - (offsetDays + i + windowDays) * 86400000).toISOString().split('T')[0];
+							const end = new Date(Date.now() - (offsetDays + i) * 86400000).toISOString().split('T')[0];
+							await ingestResource(this.env, r, { startDate: start, endDate: end });
+							requestCount++;
+						}
+
+						return { resource: r.resource, success: true, requests: requestCount } satisfies BackfillResourceResult;
+					} catch (err) {
+						console.error('Workflow resource sync failed', {
+							resource: r.resource,
+							error: err instanceof Error ? err.message : String(err),
+						});
+						// Re-throw so the step retry mechanism kicks in
+						throw err;
+					}
+				},
+			);
+
+			results.push(result);
+		}
+
+		// Step 3: Update table stats after all resources are synced
+		await step.do(
+			'update-stats',
+			{ retries: { limit: 2, delay: '5 seconds', backoff: 'constant' }, timeout: '30 seconds' },
+			async () => {
+				await updateTableStats(this.env);
+			},
+		);
+
+		// Step 4: Flush SQL KV cache so dashboards see fresh data
+		await step.do(
+			'flush-cache',
+			{ retries: { limit: 2, delay: '2 seconds', backoff: 'constant' }, timeout: '15 seconds' },
+			async () => {
+				if (this.env.OURA_CACHE) {
+					const flushed = await flushSqlCache(this.env.OURA_CACHE);
+					console.log('Backfill workflow flushed SQL cache', { entriesFlushed: flushed });
+				}
+			},
+		);
+
+		// Return summary for status polling
+		const successful = results.filter((r) => r.success).length;
+		const failed = results.filter((r) => !r.success).length;
+		const totalRequests = results.reduce((sum, r) => sum + r.requests, 0);
+
+		console.log('Backfill workflow completed', {
+			instanceId: event.instanceId,
+			successful,
+			failed,
+			totalRequests,
+		});
+
+		return {
+			totalDays,
+			offsetDays,
+			resources: results.length,
+			successful,
+			failed,
+			totalRequests,
+			results,
+		};
 	}
 }
 
 function withCors(response: Response, origin: string | null): Response {
 	const headers = new Headers(response.headers);
 
-	// Whitelist allowed origins
-	const allowedOrigins = [
-		'https://oura.keith20.dev',
-		'http://localhost:3000',
-		'http://localhost:8787', // Wrangler dev server
-	];
-
-	// Validate origin and use first allowed origin as fallback
-	const allowOrigin = origin && allowedOrigins.includes(origin) ? origin : allowedOrigins[0];
+	// Use configurable origins (set from env.ALLOWED_ORIGINS at start of fetch())
+	const allowOrigin = origin && _corsOrigins.includes(origin) ? origin : _corsOrigins[0];
 
 	// CORS headers
 	headers.set('Access-Control-Allow-Origin', allowOrigin);

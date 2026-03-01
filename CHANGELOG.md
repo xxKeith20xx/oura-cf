@@ -5,6 +5,55 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-03-01
+
+### Added
+
+- **Cloudflare Workflows for Backfill**: `/backfill` now dispatches a durable `BackfillWorkflow` instead of running inline. Each Oura resource syncs as an isolated step with its own retry budget (3 retries, exponential backoff, 5-minute timeout). Eliminates CPU/subrequest limit concerns for large backfills.
+- **`/backfill/status` Endpoint**: Poll workflow progress via `GET /backfill/status?id=<instanceId>`. Returns status (`queued`, `running`, `complete`, `errored`), error details, and structured output with per-resource results.
+- **KV SQL Query Caching**: `/api/sql` responses cached in KV with SHA-256 hash keys and 6-hour TTL. Returns `X-Cache: HIT/MISS` header. Cache automatically flushed after cron sync and backfill workflow completion.
+- **Analytics Engine Integration**: `OURA_ANALYTICS` binding logs SQL query metrics (execution time, row count, cache hit/miss) and auth attempts (success/failure, IP, country) to Cloudflare Analytics Engine.
+- **49 Tests**: Comprehensive test suite covering auth (valid/invalid tokens), SQL injection prevention (INSERT, DELETE, DROP, UPDATE, ALTER, PRAGMA, VACUUM, ATTACH, multi-statement, comment-obfuscated, CTE-wrapped writes), REPLACE() function vs REPLACE INTO, parameter validation (objects, arrays, null, boolean), LIMIT capping (inject/preserve/cap), `/api/daily_summaries` (valid range, invalid dates, defaults), CORS origin rejection, 404 handling, root endpoint.
+- **CORS Origin Configuration**: `ALLOWED_ORIGINS` env var for comma-separated CORS origins (default: `https://oura.keith20.dev`, `http://localhost:3000`, `http://localhost:8787`).
+- **Date Param Validation**: `/api/daily_summaries` validates `start` and `end` params against `YYYY-MM-DD` regex.
+- **SQL Param Validation**: Rejects objects and arrays in SQL params — only primitives (string, number, boolean, null) accepted.
+- **Unknown Endpoint Logging**: `saveToD1` logs unknown endpoint names via `KNOWN_ENDPOINTS` set.
+- **Stale OAuth State Cleanup**: Cron job deletes OAuth states older than 24 hours.
+- **Database Migration `0008_covering_indexes.sql`**: 7 covering indexes for Grafana dashboard queries.
+- **Database Migration `0009_drop_unused_tables.sql`**: Drops unused `oura_raw_documents` and `oura_sync_state` tables.
+- **Database Migration `0003_placeholder.sql`**: No-op to fill migration numbering gap (0002 → 0004).
+
+### Security
+
+- **Timing-Safe Token Comparison**: Replaced hand-rolled HMAC comparison with `crypto.subtle.timingSafeEqual` (SHA-256 hashes both sides first).
+- **`isReadOnlySql()` Fix**: `REPLACE()` string function no longer blocked — only `REPLACE INTO` (write operation) is rejected.
+- **LIMIT Capping**: Injects `LIMIT maxRows+1` when absent, caps user-provided LIMIT when it exceeds `maxRows`. Strips trailing SQL comments before LIMIT detection.
+- **`MAX_QUERY_ROWS`/`QUERY_TIMEOUT_MS` Validation**: NaN-safe with `Number.isFinite()` checks.
+- **Security Headers**: All responses include `X-Content-Type-Options`, `X-Frame-Options`, `X-XSS-Protection`, `Referrer-Policy`, `Content-Security-Policy`.
+
+### Fixed
+
+- **`syncData` Now Throws on Majority Failure**: When >50% of resources fail, `syncData` throws so `retryWithBackoff` in the cron handler can actually retry. Previously it swallowed all errors, making the retry logic dead code.
+- **`ingestResource` Error Propagation**: No longer silently returns on token acquisition failure — re-throws so failures are reported.
+- **`loadOuraResourcesFromOpenApi` Error Handling**: Now throws on failure instead of returning empty array.
+- **`flushSqlCache` Isolated from Cron Retry**: KV cache flush failure can no longer trigger unnecessary data re-sync.
+- **`request.cf` Type**: Cast from `any` to `IncomingRequestCfProperties`.
+
+### Changed
+
+- **`/backfill` Endpoint**: Now dispatches to Cloudflare Workflow (returns 202 with instance ID and status URL) instead of running sync inline. All backfill sizes use the Workflow — no more waitUntil/synchronous split.
+- **Build-Time Version**: Hardcoded `version: '1.1.0'` in `/health` response replaced with `__APP_VERSION__` injected via wrangler `define` (mirrors `package.json`).
+- **`package.json` Name**: Fixed `oura-vault` → `oura-cf` to match wrangler config.
+- **KV `remote: true` Removed**: Local dev no longer hits production KV namespace.
+- **`worker-configuration.d.ts`**: Added to `.gitignore` (stale generated file).
+- **`saveToD1` Type**: `data` param typed `Record<string, any>[]` instead of `any[]`.
+- **Dead Code Cleanup**: Removed unused `ALLOWED_SQL_KEYWORDS` and `ALLOWED_SQL_FUNCTIONS` sets, removed 19 redundant `timestamp: new Date().toISOString()` from log calls.
+
+### Documentation
+
+- **README.md**: Rewritten with Workflows section, security section, backfill status polling examples, updated architecture diagram, updated tables and file listing.
+- **Grafana Dashboard**: Removed aggressive auto-refresh intervals (minimum 15 minutes).
+
 ## [1.2.0] - 2026-02-24
 
 ### Performance
@@ -294,6 +343,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Security review documentation
 - Performance optimization guides
 
+[1.3.0]: https://github.com/xxKeith20xx/oura-cf/compare/v1.2.0...v1.3.0
+[1.2.0]: https://github.com/xxKeith20xx/oura-cf/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/xxKeith20xx/oura-cf/compare/v1.0.5...v1.1.0
 [1.0.5]: https://github.com/xxKeith20xx/oura-cf/compare/v1.0.4...v1.0.5
 [1.0.4]: https://github.com/xxKeith20xx/oura-cf/compare/v1.0.3...v1.0.4
