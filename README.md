@@ -15,8 +15,10 @@ A Cloudflare Worker that syncs Oura Ring health data to a D1 database and serves
 - **Enterprise Security**: Multi-token auth, timing-safe comparison, 3-tier rate limiting, SQL injection prevention, query timeouts
 - **SQL Query Caching**: KV-backed cache with SHA-256 keys, automatic invalidation after sync
 - **Analytics Engine**: Query and auth metrics via Cloudflare Analytics Engine
+- **Status Page**: Public `/status` page showing pipeline health, last sync time, and per-table record counts
+- **Sync Health Tracking**: Last successful sync metadata written to KV after every cron run
 - **Cost-Efficient**: Runs within Cloudflare's free tier limits
-- **Test Coverage**: 49 tests (48 passing) covering auth, SQL injection, param validation, CORS, and more
+- **Test Coverage**: 50 tests (48 passing) covering auth, SQL injection, param validation, CORS, and more
 - **Production-Ready**: Comprehensive logging, error handling, observability, and monitoring
 
 ## Table of Contents
@@ -34,38 +36,72 @@ A Cloudflare Worker that syncs Oura Ring health data to a D1 database and serves
 - [Contributing](#contributing)
 - [License](#license)
 
+## Roadmap / Next Steps
+
+### High Priority
+
+- [ ] **Modularise `src/index.ts`** — the file is ~2,300 lines and contains everything: routing, auth, sync engine, D1 write handlers, OAuth, caching, and the Workflow class. Suggested split:
+  ```
+  src/
+    index.ts           # fetch/scheduled handlers + route wiring only
+    types.ts           # Env interface + all shared types
+    middleware/
+      auth.ts          # validateBearerToken, getBearerRole, logAuthAttempt
+      cors.ts          # getCorsOrigins, withCors, security headers
+      rate-limit.ts    # getRateLimitKey helpers
+    routes/
+      health.ts        # GET /health
+      sql.ts           # POST /api/sql
+      stats.ts         # GET /api/stats
+      daily-summaries.ts
+      backfill.ts      # GET /backfill + /backfill/status
+      oauth.ts         # GET /oauth/start + /oauth/callback
+      status.ts        # GET /status
+    services/
+      oura-api.ts      # fetchWithRetry, circuit breaker, buildOuraUrl
+      sync.ts          # syncData, ingestResource
+      d1-handlers.ts   # saveToD1 dispatch table (one function per endpoint)
+      cache.ts         # hashSqlQuery, flushSqlCache
+      token.ts         # getOuraAccessToken, refreshAccessToken, upsertOauthToken
+    lib/
+      sql-validator.ts # isReadOnlySql, analyzeQueryComplexity, stripComments
+      crypto.ts        # constantTimeCompare, hashSqlQuery
+      utils.ts         # toInt, toReal, parseResourceFilter
+    workflow.ts        # BackfillWorkflow (exported separately)
+  ```
+- [ ] **Adopt [Hono](https://hono.dev/) router** — replace the `if/else` pathname chain with typed middleware and route groups. Auth, rate-limiting, and CORS become composable middleware applied per-route group rather than duplicated inline. Works cleanly with the module split above.
+
+### Medium Priority
+
+- [ ] **Expand test coverage** — the sync engine, OAuth flow, circuit breaker, and `saveToD1` handlers have no tests. After the module split, these become straightforward unit tests (pure functions or small D1 fixture tests).
+- [ ] **D1 backup workflow** — weekly GitHub Actions job running `wrangler d1 export oura-db --remote` and uploading as an artifact (90-day retention).
+- [ ] **Data export endpoint** — `GET /api/export?table=daily_summaries&start=...&end=...&format=csv` for ad-hoc data pulls without Grafana.
+
+### Low Priority
+
+- [ ] **Migrate secrets to Cloudflare Secrets Store** — replaces individual `wrangler secret put` calls with a versioned, dashboard-managed store.
+- [ ] **Grafana dashboard provisioning** — replace the static JSON import with Grafana Terraform or API-based provisioning so dashboard changes are tracked in source control.
+
+---
+
 ## Architecture
 
+![Architecture diagram](docs/architecture.svg)
+
 ```
-               ┌─────────────────┐
-               │   Oura Ring     │
-               └────────┬────────┘
-                        │ OAuth2
-                        ▼
-┌──────────────────────────────────────────────────┐
-│           Cloudflare Worker (oura-cf)            │
-│                                                  │
-│  ┌────────────────┐      ┌────────────────┐      │
-│  │  Sync Engine   │─────▶│     D1 DB      │      │
-│  │  (Parallel)    │      │   (7 tables)   │      │
-│  └────────────────┘      └────────────────┘      │
-│                                                  │
-│  ┌────────────────┐      ┌────────────────┐      │
-│  │   REST API     │      │   KV Cache     │      │
-│  │   (/api/*)     │      │  (SQL + Spec)  │      │
-│  └────────────────┘      └────────────────┘      │
-│                                                  │
-│  ┌────────────────┐      ┌────────────────┐      │
-│  │   Backfill     │      │   Analytics    │      │
-│  │   Workflow     │      │    Engine      │      │
-│  └────────────────┘      └────────────────┘      │
-└────────────────────────┬─────────────────────────┘
-                         │ HTTPS + Auth
-                         ▼
-               ┌─────────────────┐
-               │  Grafana Cloud  │
-               │  (Infinity DS)  │
-               └─────────────────┘
+Oura Ring ──► Oura Cloud API ──► Cloudflare Worker (oura-cf)
+                  OAuth2              │
+                                      ├── Sync Engine ────► D1 Database (7 tables)
+                                      ├── REST API    ────► KV Cache (SQL + spec + sync)
+                                      ├── Backfill         Analytics Engine
+                                      │   Workflow
+                                      └── Auth & Security  Rate Limiter (3-tier)
+                                              │
+                                              ▼
+                                       Grafana Cloud
+                                       (Infinity DS · 56 panels)
+
+Cron triggers (01:00, 12:00, 18:00 UTC) ──► Sync Engine
 ```
 
 ### Technology Stack
@@ -80,8 +116,8 @@ A Cloudflare Worker that syncs Oura Ring health data to a D1 database and serves
 | **Authentication** | Oura OAuth2            | Secure API access                |
 | **Visualization**  | Grafana Cloud          | Dashboards and analytics         |
 | **Language**       | TypeScript 5.9         | Type-safe development            |
-| **Testing**        | Vitest + Workers Pool  | 49 tests with Miniflare bindings |
-| **Deployment**     | Wrangler 4.68          | CLI deployment tool              |
+| **Testing**        | Vitest + Workers Pool  | 50 tests with Miniflare bindings |
+| **Deployment**     | Wrangler 4.75+         | CLI deployment tool              |
 
 ## Quick Start
 
@@ -206,11 +242,12 @@ Oura Docs Page → Discover Spec URL → Fetch OpenAPI Spec → KV Cache (24hr)
 
 ### Public Endpoints (No Auth)
 
-| Endpoint          | Method | Description                       | Rate Limit        |
-| ----------------- | ------ | --------------------------------- | ----------------- |
-| `/health`         | GET    | Health check with request details | 1 req/60s per IP  |
-| `/favicon.ico`    | GET    | Ring emoji favicon                | Cached 1 year     |
-| `/oauth/callback` | GET    | OAuth2 callback handler           | 10 req/60s per IP |
+| Endpoint          | Method | Description                                               | Rate Limit        |
+| ----------------- | ------ | --------------------------------------------------------- | ----------------- |
+| `/health`         | GET    | Health check (last sync info with auth; debug with admin) | 1 req/60s per IP  |
+| `/status`         | GET    | Pipeline status page (HTML) — record counts, last sync    | Cached 5 min      |
+| `/favicon.ico`    | GET    | Ring emoji favicon                                        | Cached 1 year     |
+| `/oauth/callback` | GET    | OAuth2 callback handler                                   | 10 req/60s per IP |
 
 ### Authenticated Endpoints (Require Bearer Token)
 
@@ -482,8 +519,11 @@ ORDER BY day
 ### Authentication
 
 - **Multi-token auth**: Separate `GRAFANA_SECRET` and `ADMIN_SECRET` for role separation
+  - `GRAFANA_SECRET` — read-only access for Grafana datasource
+  - `ADMIN_SECRET` — elevated access: enables debug output on `/health`, required for `/backfill` and `/oauth/start`
 - **Timing-safe comparison**: Uses `crypto.subtle.timingSafeEqual` (SHA-256 hash both sides first) to prevent timing attacks
 - **OAuth state validation**: 24-hour expiry with automatic cleanup via cron
+- **Debug header protection**: `/health` request headers (including auth tokens) are never returned to non-admin callers
 
 ### SQL Injection Prevention
 
@@ -517,6 +557,7 @@ npx wrangler dev
 
 # Access local worker
 curl http://localhost:8787/health
+curl http://localhost:8787/status   # Pipeline status page (HTML)
 
 # Run tests
 npm test
@@ -524,8 +565,8 @@ npm test
 # Run tests once
 npm run test:run
 
-# Type checking
-npm run cf-typegen && npx tsc --noEmit
+# Type checking (clean — no generated types file needed)
+npx tsc --noEmit
 ```
 
 ### Testing
@@ -536,7 +577,7 @@ The project uses Vitest with `@cloudflare/vitest-pool-workers` for testing again
 npm test          # Watch mode
 npm run test:run  # Single run
 
-# 49 tests (48 passing, 1 skipped)
+# 50 tests (48 passing, 2 skipped)
 # Coverage: auth, SQL injection, param validation, LIMIT capping,
 #           CORS origins, daily_summaries, 404 handling, root endpoint
 ```
@@ -548,7 +589,7 @@ oura-cf/
 ├── src/
 │   └── index.ts              # Main Worker + BackfillWorkflow (2,300+ lines)
 ├── test/
-│   └── index.spec.ts         # 49 tests
+│   └── index.spec.ts         # 50 tests
 ├── migrations/
 │   ├── 0001_init.sql         # Core tables
 │   ├── 0002_oauth_tokens.sql # OAuth token storage
@@ -558,7 +599,10 @@ oura-cf/
 │   ├── 0006_new_endpoints.sql # v1.28 tables (enhanced_tags, rest_mode_periods)
 │   ├── 0007_optimize_indexes.sql # Drop redundant indexes
 │   ├── 0008_covering_indexes.sql # Covering indexes for Grafana queries
-│   └── 0009_drop_unused_tables.sql # Drop unused tables
+│   ├── 0009_drop_unused_tables.sql # Drop unused tables
+│   └── 0010_drop_user_tags.sql # Drop superseded user_tags table
+├── scripts/
+│   └── sync-version.sh       # Syncs version from package.json → wrangler.jsonc + vitest config
 ├── wrangler.jsonc            # Cloudflare configuration
 ├── vitest.config.mts         # Test configuration
 ├── package.json              # Dependencies
@@ -571,20 +615,22 @@ oura-cf/
 
 ### Key Functions
 
-| Function                         | Purpose                                          |
-| -------------------------------- | ------------------------------------------------ |
-| `BackfillWorkflow.run()`         | Durable backfill with per-resource steps         |
-| `syncData()`                     | Parallel resource fetching orchestrator          |
-| `ingestResource()`               | Fetch data from Oura API with pagination         |
-| `saveToD1()`                     | Transform & save data to D1 (15 endpoints)       |
-| `discoverOpenApiSpecUrl()`       | Auto-discover current Oura API spec URL          |
-| `loadOuraResourcesFromOpenApi()` | Dynamic endpoint discovery from OpenAPI spec     |
-| `getOuraAccessToken()`           | OAuth token management with auto-refresh         |
-| `updateTableStats()`             | Pre-compute table statistics (7 tables)          |
-| `flushSqlCache()`                | Invalidate KV-cached SQL query results           |
-| `hashSqlQuery()`                 | SHA-256 cache key generation for SQL queries     |
-| `isReadOnlySql()`                | SQL injection prevention and query validation    |
-| `constantTimeCompare()`          | Timing-safe token comparison via timingSafeEqual |
+| Function                         | Purpose                                                        |
+| -------------------------------- | -------------------------------------------------------------- |
+| `BackfillWorkflow.run()`         | Durable backfill with per-resource steps                       |
+| `syncData()`                     | Parallel resource fetching orchestrator                        |
+| `ingestResource()`               | Fetch data from Oura API with pagination                       |
+| `saveToD1()`                     | Transform & save data to D1 (14 endpoints)                     |
+| `discoverOpenApiSpecUrl()`       | Auto-discover current Oura API spec URL                        |
+| `loadOuraResourcesFromOpenApi()` | Dynamic endpoint discovery from OpenAPI spec                   |
+| `getOuraAccessToken()`           | OAuth token management with auto-refresh                       |
+| `updateTableStats()`             | Pre-compute table statistics (7 tables)                        |
+| `flushSqlCache()`                | Invalidate KV-cached SQL query results                         |
+| `hashSqlQuery()`                 | SHA-256 cache key generation for SQL queries                   |
+| `isReadOnlySql()`                | SQL injection prevention and query validation                  |
+| `getBearerRole()`                | Returns `'admin'`, `'grafana'`, or `null` for a bearer token   |
+| `constantTimeCompare()`          | Timing-safe token comparison via timingSafeEqual               |
+| `getCorsOrigins()`               | Derives per-request CORS origins from env (no mutable globals) |
 
 ### Adding New Oura Endpoints
 
@@ -603,6 +649,7 @@ Quick summary:
 - Use conventional commit messages (`feat:`, `fix:`, `docs:`)
 - Update CHANGELOG.md for notable changes
 - Test locally with `npm run test:run` before submitting
+- Use `npm version patch|minor|major` to bump versions — the `version` hook auto-syncs `wrangler.jsonc` and `vitest.config.mts`
 - Open an issue for major changes before starting work
 
 ## AI Development Resources

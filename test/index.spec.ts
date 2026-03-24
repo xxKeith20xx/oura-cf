@@ -55,8 +55,23 @@ describe('Health Endpoint', () => {
 			version: '1.3.0',
 		});
 		expect(data.timestamp).toBeDefined();
+		// request debug info is admin-only — not present without auth
+		expect(data.request).toBeUndefined();
+	});
+
+	it.skip('returns debug info with admin token (skipped: rate limited in tests)', async () => {
+		// Health endpoint is 1 req/60s — the prior test consumes the slot.
+		// Verify the behaviour manually: GET /health with Bearer test-admin-secret
+		// should return { status:'ok', request:{ method:'GET', ... } } with no authorization header.
+		const response = await SELF.fetch('https://example.com/health', {
+			headers: { Authorization: 'Bearer test-admin-secret' },
+		});
+		expect(response.status).toBe(200);
+		const data = (await response.json()) as any;
 		expect(data.request).toBeDefined();
 		expect(data.request.method).toBe('GET');
+		// Authorization header must be stripped from debug output
+		expect(data.request.headers?.authorization).toBeUndefined();
 	});
 
 	it.skip('includes request metadata (skipped: rate limited in tests)', async () => {

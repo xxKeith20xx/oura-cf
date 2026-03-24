@@ -1,0 +1,115 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 40 1060 620" width="1060" height="620" font-family="system-ui, -apple-system, sans-serif">
+  <rect width="100%" height="100%" fill="#ffffff"/>
+
+  <!-- Oura Ring -->
+  <rect x="60" y="60" width="160" height="60" rx="8" fill="#d0ebff" stroke="#1971c2" stroke-width="2"/>
+  <text x="140" y="88" text-anchor="middle" font-size="15" fill="#1971c2" font-weight="600">&#x1F48D; Oura Ring</text>
+  <text x="140" y="108" text-anchor="middle" font-size="12" fill="#1971c2">Health Wearable</text>
+
+  <!-- Arrow: Ring → API -->
+  <line x1="140" y1="120" x2="140" y2="192" stroke="#1971c2" stroke-width="2" marker-end="url(#arrow-blue)"/>
+  <text x="148" y="160" font-size="11" fill="#1971c2">syncs data</text>
+
+  <!-- Oura Cloud API -->
+  <rect x="60" y="200" width="160" height="60" rx="8" fill="#d0ebff" stroke="#1971c2" stroke-width="2"/>
+  <text x="140" y="228" text-anchor="middle" font-size="15" fill="#1971c2" font-weight="600">Oura Cloud API</text>
+  <text x="140" y="248" text-anchor="middle" font-size="12" fill="#1971c2">v2 REST + OAuth2</text>
+
+  <!-- Arrow: Oura API → Worker -->
+  <line x1="220" y1="230" x2="292" y2="230" stroke="#1971c2" stroke-width="2" marker-end="url(#arrow-blue)"/>
+  <text x="233" y="222" font-size="11" fill="#1971c2">OAuth2</text>
+  <text x="233" y="235" font-size="11" fill="#1971c2">fetch</text>
+
+  <!-- Cloudflare Worker box -->
+  <rect x="300" y="40" width="480" height="500" rx="12" fill="#fff9db" stroke="#f08c00" stroke-width="2"/>
+  <text x="540" y="66" text-anchor="middle" font-size="17" fill="#e67700" font-weight="700">&#x2601;&#xFE0F;  Cloudflare Worker  (oura-cf)</text>
+
+  <!-- Sync Engine -->
+  <rect x="320" y="100" width="180" height="70" rx="8" fill="#d3f9d8" stroke="#2f9e44" stroke-width="2"/>
+  <text x="410" y="124" text-anchor="middle" font-size="14" fill="#2f9e44" font-weight="600">&#x2699;&#xFE0F;  Sync Engine</text>
+  <text x="410" y="144" text-anchor="middle" font-size="11" fill="#2f9e44">parallel fetch · upsert</text>
+
+  <!-- REST API -->
+  <rect x="320" y="210" width="180" height="70" rx="8" fill="#d3f9d8" stroke="#2f9e44" stroke-width="2"/>
+  <text x="410" y="234" text-anchor="middle" font-size="14" fill="#2f9e44" font-weight="600">&#x1F310;  REST API</text>
+  <text x="410" y="254" text-anchor="middle" font-size="11" fill="#2f9e44">/api/sql · /api/stats · /status</text>
+
+  <!-- Backfill Workflow -->
+  <rect x="320" y="320" width="180" height="70" rx="8" fill="#d3f9d8" stroke="#2f9e44" stroke-width="2"/>
+  <text x="410" y="344" text-anchor="middle" font-size="14" fill="#2f9e44" font-weight="600">&#x1F504;  Backfill Workflow</text>
+  <text x="410" y="364" text-anchor="middle" font-size="11" fill="#2f9e44">durable · per-step retry</text>
+
+  <!-- Auth & Security -->
+  <rect x="320" y="430" width="180" height="70" rx="8" fill="#d3f9d8" stroke="#2f9e44" stroke-width="2"/>
+  <text x="410" y="454" text-anchor="middle" font-size="14" fill="#2f9e44" font-weight="600">&#x1F510;  Auth &amp; Security</text>
+  <text x="410" y="474" text-anchor="middle" font-size="11" fill="#2f9e44">bearer · rate limit · CORS</text>
+
+  <!-- Arrows: Worker Logic → CF Bindings -->
+  <line x1="500" y1="135" x2="552" y2="135" stroke="#495057" stroke-width="2" marker-end="url(#arrow-gray)"/>
+  <line x1="500" y1="245" x2="552" y2="245" stroke="#495057" stroke-width="2" marker-end="url(#arrow-gray)"/>
+  <line x1="500" y1="355" x2="552" y2="355" stroke="#495057" stroke-width="2" marker-end="url(#arrow-gray)"/>
+  <line x1="500" y1="465" x2="552" y2="465" stroke="#495057" stroke-width="2" marker-end="url(#arrow-gray)"/>
+
+  <!-- D1 Database -->
+  <rect x="560" y="100" width="180" height="70" rx="8" fill="#f3d9fa" stroke="#9c36b5" stroke-width="2"/>
+  <text x="650" y="124" text-anchor="middle" font-size="14" fill="#9c36b5" font-weight="600">&#x1F5C4;&#xFE0F;  D1 Database</text>
+  <text x="650" y="144" text-anchor="middle" font-size="11" fill="#9c36b5">SQLite · 7 tables · upsert</text>
+
+  <!-- KV Cache -->
+  <rect x="560" y="210" width="180" height="70" rx="8" fill="#f3d9fa" stroke="#9c36b5" stroke-width="2"/>
+  <text x="650" y="234" text-anchor="middle" font-size="14" fill="#9c36b5" font-weight="600">&#x26A1;  KV Cache</text>
+  <text x="650" y="254" text-anchor="middle" font-size="11" fill="#9c36b5">SQL results · OpenAPI · sync</text>
+
+  <!-- Analytics Engine -->
+  <rect x="560" y="320" width="180" height="70" rx="8" fill="#f3d9fa" stroke="#9c36b5" stroke-width="2"/>
+  <text x="650" y="344" text-anchor="middle" font-size="14" fill="#9c36b5" font-weight="600">&#x1F4CA;  Analytics Engine</text>
+  <text x="650" y="364" text-anchor="middle" font-size="11" fill="#9c36b5">query &amp; auth metrics</text>
+
+  <!-- Rate Limiter -->
+  <rect x="560" y="430" width="180" height="70" rx="8" fill="#f3d9fa" stroke="#9c36b5" stroke-width="2"/>
+  <text x="650" y="454" text-anchor="middle" font-size="14" fill="#9c36b5" font-weight="600">&#x1F6A6;  Rate Limiter</text>
+  <text x="650" y="474" text-anchor="middle" font-size="11" fill="#9c36b5">3-tier · per IP + token</text>
+
+  <!-- Cron badge -->
+  <rect x="340" y="570" width="160" height="36" rx="8" fill="#ffe8cc" stroke="#f08c00" stroke-width="2"/>
+  <text x="420" y="593" text-anchor="middle" font-size="12" fill="#e67700" font-weight="600">&#x23F0;  Cron  01/12/18 UTC</text>
+  <!-- Dashed arrow: Cron → Sync Engine -->
+  <line x1="420" y1="570" x2="420" y2="178" stroke="#f08c00" stroke-width="2" stroke-dasharray="6,4" marker-end="url(#arrow-orange)"/>
+
+  <!-- Grafana -->
+  <rect x="860" y="160" width="175" height="80" rx="8" fill="#ffe3e3" stroke="#e03131" stroke-width="2"/>
+  <text x="947" y="188" text-anchor="middle" font-size="14" fill="#c92a2a" font-weight="600">&#x1F4C8;  Grafana Cloud</text>
+  <text x="947" y="208" text-anchor="middle" font-size="11" fill="#c92a2a">Infinity DS · 56 panels</text>
+
+  <!-- Bidirectional arrow: Worker ↔ Grafana -->
+  <line x1="780" y1="200" x2="852" y2="200" stroke="#e03131" stroke-width="2" marker-start="url(#arrow-red-start)" marker-end="url(#arrow-red)"/>
+  <text x="816" y="192" text-anchor="middle" font-size="11" fill="#e03131">HTTPS · Bearer</text>
+  <text x="816" y="205" text-anchor="middle" font-size="11" fill="#e03131">/api/sql POST</text>
+
+  <!-- Legend -->
+  <rect x="310" y="622" width="14" height="14" rx="3" fill="#f3d9fa" stroke="#9c36b5" stroke-width="2"/>
+  <text x="330" y="633" font-size="12" fill="#9c36b5">CF Bindings</text>
+  <rect x="430" y="622" width="14" height="14" rx="3" fill="#d3f9d8" stroke="#2f9e44" stroke-width="2"/>
+  <text x="450" y="633" font-size="12" fill="#2f9e44">Worker Logic</text>
+  <rect x="560" y="622" width="14" height="14" rx="3" fill="#d0ebff" stroke="#1971c2" stroke-width="2"/>
+  <text x="580" y="633" font-size="12" fill="#1971c2">Oura / External</text>
+
+  <!-- Arrow markers -->
+  <defs>
+    <marker id="arrow-blue" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#1971c2"/>
+    </marker>
+    <marker id="arrow-gray" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#495057"/>
+    </marker>
+    <marker id="arrow-orange" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#f08c00"/>
+    </marker>
+    <marker id="arrow-red" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#e03131"/>
+    </marker>
+    <marker id="arrow-red-start" markerWidth="8" markerHeight="8" refX="2" refY="3" orient="auto-start-reverse">
+      <path d="M0,0 L0,6 L8,3 z" fill="#e03131"/>
+    </marker>
+  </defs>
+</svg>

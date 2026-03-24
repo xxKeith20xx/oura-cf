@@ -120,6 +120,15 @@ async function flushSqlCache(kv: KVNamespace): Promise<number> {
 	return deleted;
 }
 
+// Security: Validate Bearer token and return which role it belongs to (null = invalid)
+async function getBearerRole(authHeader: string | null, env: Env): Promise<'grafana' | 'admin' | null> {
+	if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
+	const token = authHeader.substring(7);
+	if (env.ADMIN_SECRET && (await constantTimeCompare(token, env.ADMIN_SECRET))) return 'admin';
+	if (await constantTimeCompare(token, env.GRAFANA_SECRET)) return 'grafana';
+	return null;
+}
+
 // Security: Validate Bearer token against multiple secrets (supports rotation)
 async function validateBearerToken(authHeader: string | null, env: Env): Promise<boolean> {
 	if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -217,10 +226,14 @@ const MAX_PARAMS = 100; // Maximum SQL parameters
 const MAX_BODY_SIZE = 1_048_576; // 1MB max request body size
 const DEFAULT_CORS_ORIGINS = ['https://oura.keith20.dev', 'http://localhost:3000', 'http://localhost:8787'];
 
-// Module-level CORS origins, set at the start of each fetch() from env.ALLOWED_ORIGINS.
-// Safe because Workers isolates process fetch() requests sequentially, and waitUntil()
-// callbacks don't call withCors. If concurrency assumptions change, pass origins explicitly.
-let _corsOrigins: string[] = DEFAULT_CORS_ORIGINS;
+// Derive CORS origins from env each request — no mutable module-level state.
+function getCorsOrigins(env: Pick<Env, 'ALLOWED_ORIGINS'>): string[] {
+	return env.ALLOWED_ORIGINS
+		? env.ALLOWED_ORIGINS.split(',')
+				.map((o) => o.trim())
+				.filter(Boolean)
+		: DEFAULT_CORS_ORIGINS;
+}
 
 // Circuit breaker state (in-memory, resets on Worker restart)
 const circuitBreakerState = {
@@ -313,8 +326,25 @@ export default {
 		ctx.waitUntil(
 			retryWithBackoff(
 				async () => {
+					const syncStart = Date.now();
 					await syncData(env, 3, 0, null);
 					await updateTableStats(env);
+					// Record successful sync metadata for /health and /status endpoints
+					if (env.OURA_CACHE) {
+						try {
+							await env.OURA_CACHE.put(
+								'sync:last_success',
+								JSON.stringify({
+									timestamp: new Date().toISOString(),
+									trigger: controller.cron,
+									durationMs: Date.now() - syncStart,
+								}),
+								{ expirationTtl: 86400 * 7 }, // Keep for 7 days
+							);
+						} catch {
+							// Non-fatal
+						}
+					}
 				},
 				{ maxRetries: 3, baseDelay: 5000, maxDelay: 60000 },
 			).then(async () => {
@@ -344,19 +374,15 @@ export default {
 
 	// 2. HTTP Fetch: API and Manual Backfill
 	async fetch(request: Request, env: Env, ctx: ExecutionContext) {
-		// Parse configurable CORS origins once per request (env.ALLOWED_ORIGINS is comma-separated)
-		_corsOrigins = env.ALLOWED_ORIGINS
-			? env.ALLOWED_ORIGINS.split(',')
-					.map((o) => o.trim())
-					.filter(Boolean)
-			: DEFAULT_CORS_ORIGINS;
-
+		const corsOrigins = getCorsOrigins(env);
 		const url = new URL(request.url);
 		const auth = request.headers.get('Authorization');
 		const origin = request.headers.get('Origin');
+		// Request-scoped helper so all withCors calls use the same origins without global state
+		const cors = (response: Response) => withCors(response, origin, corsOrigins);
 
 		if (request.method === 'OPTIONS') {
-			return withCors(
+			return cors(
 				new Response(null, {
 					status: 204,
 					headers: {
@@ -364,7 +390,6 @@ export default {
 						'Access-Control-Allow-Headers': 'Authorization,Content-Type',
 					},
 				}),
-				origin,
 			);
 		}
 
@@ -372,7 +397,7 @@ export default {
 		if (request.method === 'POST' || request.method === 'PUT') {
 			const contentLength = request.headers.get('Content-Length');
 			if (contentLength && parseInt(contentLength, 10) > MAX_BODY_SIZE) {
-				return withCors(Response.json({ error: 'Request body too large (max 1MB)' }, { status: 413 }), origin);
+				return cors(Response.json({ error: 'Request body too large (max 1MB)' }, { status: 413 }));
 			}
 		}
 
@@ -382,29 +407,47 @@ export default {
 			const rateLimitKey = await getRateLimitKey(clientIP, null, 'health');
 			const { success } = await env.RATE_LIMITER.limit({ key: rateLimitKey });
 			if (!success) {
-				return withCors(Response.json({ error: 'Rate limit exceeded. Max 1 request per 60 seconds.' }, { status: 429 }), origin);
+				return cors(Response.json({ error: 'Rate limit exceeded. Max 1 request per 60 seconds.' }, { status: 429 }));
 			}
 
-			// Collect all request headers for debugging
-			const headers: Record<string, string> = {};
-			request.headers.forEach((value, key) => {
-				headers[key] = value;
-			});
+			const healthAuth = request.headers.get('Authorization');
+			const healthRole = await getBearerRole(healthAuth, env);
 
-			return withCors(
-				Response.json({
-					status: 'ok',
-					timestamp: new Date().toISOString(),
-					version: __APP_VERSION__,
-					request: {
-						headers: headers,
-						method: request.method,
-						url: request.url,
-						cf: request.cf, // Cloudflare-specific request properties
-					},
-				}),
-				origin,
-			);
+			// Base response (public)
+			const healthResponse: Record<string, unknown> = {
+				status: 'ok',
+				timestamp: new Date().toISOString(),
+				version: __APP_VERSION__,
+			};
+
+			// Last sync status (available to all authenticated callers)
+			if (healthRole !== null && env.OURA_CACHE) {
+				try {
+					const lastSync = (await env.OURA_CACHE.get('sync:last_success', 'json')) as Record<string, unknown> | null;
+					healthResponse.lastSync = lastSync ?? null;
+				} catch {
+					// Non-fatal — don't block health response
+				}
+			}
+
+			// Full debug info (admin only) — includes request headers, CF properties, etc.
+			if (healthRole === 'admin') {
+				const headers: Record<string, string> = {};
+				request.headers.forEach((value, key) => {
+					// Strip sensitive headers even for admin (they don't need to round-trip auth tokens)
+					if (!['authorization', 'cookie'].includes(key.toLowerCase())) {
+						headers[key] = value;
+					}
+				});
+				healthResponse.request = {
+					headers,
+					method: request.method,
+					url: request.url,
+					cf: request.cf,
+				};
+			}
+
+			return cors(Response.json(healthResponse));
 		}
 
 		// Favicon - browsers automatically request this, don't require auth
@@ -413,14 +456,13 @@ export default {
 		<text y="0.9em" font-size="90">💍</text>
 	</svg>`;
 
-			return withCors(
+			return cors(
 				new Response(svg, {
 					headers: {
 						'Content-Type': 'image/svg+xml',
 						'Cache-Control': 'public, max-age=31536000',
 					},
 				}),
-				origin,
 			);
 		}
 
@@ -430,35 +472,35 @@ export default {
 			const rateLimitKey = await getRateLimitKey(clientIP, null, 'unauth');
 			const { success } = await env.UNAUTH_RATE_LIMITER.limit({ key: rateLimitKey });
 			if (!success) {
-				return withCors(Response.json({ error: 'Rate limit exceeded. Please wait before retrying.' }, { status: 429 }), origin);
+				return cors(Response.json({ error: 'Rate limit exceeded. Please wait before retrying.' }, { status: 429 }));
 			}
 
 			if (!env.oura_db) {
-				return withCors(Response.json({ error: 'D1 binding missing or misconfigured (oura_db)' }, { status: 500 }), origin);
+				return cors(Response.json({ error: 'D1 binding missing or misconfigured (oura_db)' }, { status: 500 }));
 			}
 
 			const err = url.searchParams.get('error');
 			if (err) {
 				// Validate error parameter length to prevent log injection
 				const sanitizedError = err.slice(0, 200);
-				return withCors(Response.json({ error: sanitizedError }, { status: 400 }), origin);
+				return cors(Response.json({ error: sanitizedError }, { status: 400 }));
 			}
 			const code = url.searchParams.get('code');
 			const state = url.searchParams.get('state');
 
 			// Validation: Check parameter lengths and formats
 			if (!code || !state) {
-				return withCors(Response.json({ error: 'Missing code/state' }, { status: 400 }), origin);
+				return cors(Response.json({ error: 'Missing code/state' }, { status: 400 }));
 			}
 
 			// Validation: OAuth authorization codes are typically 40-50 chars
 			if (code.length < 10 || code.length > 100) {
-				return withCors(Response.json({ error: 'Invalid code format' }, { status: 400 }), origin);
+				return cors(Response.json({ error: 'Invalid code format' }, { status: 400 }));
 			}
 
 			// Validation: State should be a UUID (36 chars) or similar
 			if (state.length < 10 || state.length > 100) {
-				return withCors(Response.json({ error: 'Invalid state format' }, { status: 400 }), origin);
+				return cors(Response.json({ error: 'Invalid state format' }, { status: 400 }));
 			}
 
 			const stateRow = await env.oura_db
@@ -466,13 +508,13 @@ export default {
 				.bind(state)
 				.first<OuraOAuthStateRow>();
 			if (!stateRow) {
-				return withCors(Response.json({ error: 'Invalid state' }, { status: 400 }), origin);
+				return cors(Response.json({ error: 'Invalid state' }, { status: 400 }));
 			}
 
 			const createdAt = Number(stateRow.created_at);
 			if (!Number.isFinite(createdAt) || Date.now() - createdAt > 15 * 60_000) {
 				await env.oura_db.prepare('DELETE FROM oura_oauth_states WHERE state = ?').bind(state).run();
-				return withCors(Response.json({ error: 'State expired' }, { status: 400 }), origin);
+				return cors(Response.json({ error: 'State expired' }, { status: 400 }));
 			}
 
 			await env.oura_db.prepare('DELETE FROM oura_oauth_states WHERE state = ?').bind(state).run();
@@ -481,7 +523,7 @@ export default {
 			callbackUrl.search = '';
 			const token = await exchangeAuthorizationCodeForToken(env, code, callbackUrl.toString());
 			await upsertOauthToken(env, stateRow.user_id ?? 'default', token);
-			return withCors(Response.json({ message: 'OK' }, { status: 200 }), origin);
+			return cors(Response.json({ message: 'OK' }, { status: 200 }));
 		}
 
 		// Security: Validate authentication using constant-time comparison
@@ -496,11 +538,11 @@ export default {
 
 			if (!unauthRateLimit) {
 				logAuthAttempt(false, request, 'Rate limit exceeded (unauthenticated)', env.OURA_ANALYTICS);
-				return withCors(Response.json({ error: 'Rate limit exceeded. Please wait before retrying.' }, { status: 429 }), origin);
+				return cors(Response.json({ error: 'Rate limit exceeded. Please wait before retrying.' }, { status: 429 }));
 			}
 
 			logAuthAttempt(false, request, 'Invalid or missing token', env.OURA_ANALYTICS);
-			return withCors(Response.json({ error: 'Unauthorized' }, { status: 401 }), origin);
+			return cors(Response.json({ error: 'Unauthorized' }, { status: 401 }));
 		}
 
 		// Authentication successful - log it
@@ -512,11 +554,11 @@ export default {
 		const { success: authRateLimit } = await env.AUTH_RATE_LIMITER.limit({ key: authRateLimitKey });
 
 		if (!authRateLimit) {
-			return withCors(Response.json({ error: 'Rate limit exceeded. Maximum 3000 requests per minute.' }, { status: 429 }), origin);
+			return cors(Response.json({ error: 'Rate limit exceeded. Maximum 3000 requests per minute.' }, { status: 429 }));
 		}
 
 		if (!env.oura_db) {
-			return withCors(Response.json({ error: 'D1 binding missing or misconfigured (oura_db)' }, { status: 500 }), origin);
+			return cors(Response.json({ error: 'D1 binding missing or misconfigured (oura_db)' }, { status: 500 }));
 		}
 
 		if (url.pathname === '/oauth/start') {
@@ -538,7 +580,7 @@ export default {
 				.join(' ');
 
 			if (!env.OURA_CLIENT_ID) {
-				return withCors(Response.json({ error: 'Missing OURA_CLIENT_ID secret' }, { status: 500 }), origin);
+				return cors(Response.json({ error: 'Missing OURA_CLIENT_ID secret' }, { status: 500 }));
 			}
 
 			const authUrl = new URL('https://cloud.ouraring.com/oauth/authorize');
@@ -558,10 +600,7 @@ export default {
 			const rateLimitKey = await getRateLimitKey(clientIP, auth, 'health');
 			const { success: backfillRateOk } = await env.RATE_LIMITER.limit({ key: `backfill:${rateLimitKey}` });
 			if (!backfillRateOk) {
-				return withCors(
-					Response.json({ error: 'Rate limit exceeded. Please wait 60 seconds between backfill requests.' }, { status: 429 }),
-					origin,
-				);
+				return cors(Response.json({ error: 'Rate limit exceeded. Please wait 60 seconds between backfill requests.' }, { status: 429 }));
 			}
 
 			const daysParam = url.searchParams.get('days');
@@ -572,7 +611,7 @@ export default {
 			const maxTotalDays = Math.max(0, MAX_BACKFILL_DAYS - offsetDays);
 			const totalDays = Number.isFinite(days) && days > 0 ? Math.min(days, maxTotalDays) : 730;
 			if (totalDays <= 0) {
-				return withCors(Response.json({ error: 'Backfill window out of range' }, { status: 400 }), origin);
+				return cors(Response.json({ error: 'Backfill window out of range' }, { status: 400 }));
 			}
 			const resourcesParam = url.searchParams.get('resources');
 			const resourceFilter = parseResourceFilter(resourcesParam);
@@ -603,7 +642,7 @@ export default {
 					resourceFilter: resourceFilter ? [...resourceFilter] : 'all',
 				});
 
-				return withCors(
+				return cors(
 					Response.json(
 						{
 							message: 'Backfill workflow started.',
@@ -614,13 +653,12 @@ export default {
 						},
 						{ status: 202 },
 					),
-					origin,
 				);
 			} catch (err) {
 				console.error('Failed to dispatch backfill workflow', {
 					error: err instanceof Error ? err.message : String(err),
 				});
-				return withCors(
+				return cors(
 					Response.json(
 						{
 							error: 'Failed to start backfill workflow',
@@ -628,7 +666,6 @@ export default {
 						},
 						{ status: 500 },
 					),
-					origin,
 				);
 			}
 		}
@@ -636,27 +673,26 @@ export default {
 		if (url.pathname === '/backfill/status') {
 			const instanceId = url.searchParams.get('id');
 			if (!instanceId) {
-				return withCors(Response.json({ error: 'Missing required parameter: id' }, { status: 400 }), origin);
+				return cors(Response.json({ error: 'Missing required parameter: id' }, { status: 400 }));
 			}
 
 			try {
 				const instance = await env.BACKFILL_WORKFLOW.get(instanceId);
 				const status = await instance.status();
 
-				return withCors(
+				return cors(
 					Response.json({
 						instanceId,
 						status: status.status,
 						error: status.error || undefined,
 						output: status.output || undefined,
 					}),
-					origin,
 				);
 			} catch (err) {
 				const message = err instanceof Error ? err.message : String(err);
 				// Workflow.get throws if the instance doesn't exist
 				const isNotFound = message.includes('not found') || message.includes('does not exist');
-				return withCors(
+				return cors(
 					Response.json(
 						{
 							error: isNotFound ? 'Workflow instance not found' : 'Failed to fetch workflow status',
@@ -664,7 +700,6 @@ export default {
 						},
 						{ status: isNotFound ? 404 : 500 },
 					),
-					origin,
 				);
 			}
 		}
@@ -675,10 +710,10 @@ export default {
 			const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
 
 			if (start && !dateRegex.test(start)) {
-				return withCors(Response.json({ error: 'Invalid start date format (expected YYYY-MM-DD)' }, { status: 400 }), origin);
+				return cors(Response.json({ error: 'Invalid start date format (expected YYYY-MM-DD)' }, { status: 400 }));
 			}
 			if (end && !dateRegex.test(end)) {
-				return withCors(Response.json({ error: 'Invalid end date format (expected YYYY-MM-DD)' }, { status: 400 }), origin);
+				return cors(Response.json({ error: 'Invalid end date format (expected YYYY-MM-DD)' }, { status: 400 }));
 			}
 
 			const where: string[] = [];
@@ -702,7 +737,7 @@ export default {
 			try {
 				const stmt = env.oura_db.prepare(`SELECT * FROM daily_summaries ${whereSql} ORDER BY day ASC`);
 				const out = args.length ? await stmt.bind(...args).all() : await stmt.all();
-				return withCors(
+				return cors(
 					new Response(JSON.stringify(out.results), {
 						headers: {
 							'Content-Type': 'application/json',
@@ -710,10 +745,9 @@ export default {
 							'Cache-Control': `private, max-age=${RESPONSE_CACHE_TTL}`,
 						},
 					}),
-					origin,
 				);
 			} catch (err) {
-				return withCors(Response.json({ error: 'D1 query failed', details: String(err).slice(0, 500) }, { status: 500 }), origin);
+				return cors(Response.json({ error: 'D1 query failed', details: String(err).slice(0, 500) }, { status: 500 }));
 			}
 		}
 
@@ -730,31 +764,30 @@ export default {
 
 				// Validation: SQL length limit
 				if (sql.length === 0) {
-					return withCors(Response.json({ error: 'SQL query is required' }, { status: 400 }), origin);
+					return cors(Response.json({ error: 'SQL query is required' }, { status: 400 }));
 				}
 
 				if (sql.length > MAX_SQL_LENGTH) {
-					return withCors(Response.json({ error: `SQL too large (max ${MAX_SQL_LENGTH} characters)` }, { status: 400 }), origin);
+					return cors(Response.json({ error: `SQL too large (max ${MAX_SQL_LENGTH} characters)` }, { status: 400 }));
 				}
 
 				// Validation: Read-only queries only
 				if (!isReadOnlySql(sql)) {
 					logSqlQuery(request, sql, params, Date.now() - queryStartTime, 0, 'Query blocked: not read-only', env.OURA_ANALYTICS);
-					return withCors(Response.json({ error: 'Only read-only SQL queries are allowed' }, { status: 400 }), origin);
+					return cors(Response.json({ error: 'Only read-only SQL queries are allowed' }, { status: 400 }));
 				}
 
 				// Validation: Parameter count limit
 				if (params.length > MAX_PARAMS) {
-					return withCors(Response.json({ error: `Too many parameters (max ${MAX_PARAMS})` }, { status: 400 }), origin);
+					return cors(Response.json({ error: `Too many parameters (max ${MAX_PARAMS})` }, { status: 400 }));
 				}
 
 				// Validation: Each param must be a bindable primitive (string, number, boolean, null)
 				for (let i = 0; i < params.length; i++) {
 					const p = params[i];
 					if (p !== null && typeof p !== 'string' && typeof p !== 'number' && typeof p !== 'boolean') {
-						return withCors(
+						return cors(
 							Response.json({ error: `Invalid parameter type at index ${i}: expected string, number, boolean, or null` }, { status: 400 }),
-							origin,
 						);
 					}
 				}
@@ -780,7 +813,7 @@ export default {
 					if (cached) {
 						const executionTime = Date.now() - queryStartTime;
 						logSqlQuery(request, sql, params, executionTime, -1, undefined, env.OURA_ANALYTICS); // -1 = cache hit
-						return withCors(
+						return cors(
 							new Response(cached, {
 								headers: {
 									'Content-Type': 'application/json',
@@ -791,7 +824,6 @@ export default {
 									'X-Cache': 'HIT',
 								},
 							}),
-							origin,
 						);
 					}
 				}
@@ -846,7 +878,7 @@ export default {
 				// Security: Enforce row limit
 				if (rowCount > maxRows) {
 					logSqlQuery(request, sql, params, executionTime, rowCount, `Too many rows returned: ${rowCount}`, env.OURA_ANALYTICS);
-					return withCors(
+					return cors(
 						Response.json(
 							{
 								error: 'Query returned too many rows',
@@ -854,7 +886,6 @@ export default {
 							},
 							{ status: 400 },
 						),
-						origin,
 					);
 				}
 
@@ -871,7 +902,7 @@ export default {
 					ctx.waitUntil(env.OURA_CACHE.put(cacheKey, responseBody, { expirationTtl: kvCacheTtl }));
 				}
 
-				return withCors(
+				return cors(
 					new Response(responseBody, {
 						headers: {
 							'Content-Type': 'application/json',
@@ -883,7 +914,6 @@ export default {
 							'X-Cache': 'MISS',
 						},
 					}),
-					origin,
 				);
 			} catch (err) {
 				const executionTime = Date.now() - queryStartTime;
@@ -894,7 +924,7 @@ export default {
 
 				// Security: Don't leak detailed database errors to clients
 				if (errorMessage.includes('timeout')) {
-					return withCors(
+					return cors(
 						Response.json(
 							{
 								error: 'Query timeout',
@@ -902,12 +932,11 @@ export default {
 							},
 							{ status: 408 },
 						),
-						origin,
 					);
 				}
 
 				// Generic error message (don't expose internal details)
-				return withCors(
+				return cors(
 					Response.json(
 						{
 							error: 'Query execution failed',
@@ -915,13 +944,12 @@ export default {
 						},
 						{ status: 500 },
 					),
-					origin,
 				);
 			}
 		}
 
 		if (url.pathname === '/api/sql') {
-			return withCors(Response.json({ error: 'Method Not Allowed' }, { status: 405 }), origin);
+			return cors(Response.json({ error: 'Method Not Allowed' }, { status: 405 }));
 		}
 
 		// Dedicated endpoint for table statistics (fast, approximate counts)
@@ -933,14 +961,13 @@ export default {
 					.all();
 
 				if (cachedStats && cachedStats.length > 0) {
-					return withCors(
+					return cors(
 						new Response(JSON.stringify(cachedStats), {
 							headers: {
 								'Content-Type': 'application/json',
 								'Cache-Control': 'private, max-age=3600',
 							},
 						}),
-						origin,
 					);
 				}
 
@@ -975,20 +1002,16 @@ export default {
 					max_day: row.max_day?.substring(0, 10) ?? null,
 				}));
 
-				return withCors(
+				return cors(
 					new Response(JSON.stringify(truncatedResults), {
 						headers: {
 							'Content-Type': 'application/json',
 							'Cache-Control': 'private, max-age=60', // Short cache since it's a fallback
 						},
 					}),
-					origin,
 				);
 			} catch (err) {
-				return withCors(
-					Response.json({ error: 'Failed to fetch table stats', details: String(err).slice(0, 500) }, { status: 500 }),
-					origin,
-				);
+				return cors(Response.json({ error: 'Failed to fetch table stats', details: String(err).slice(0, 500) }, { status: 500 }));
 			}
 		}
 
@@ -1002,7 +1025,7 @@ export default {
 				// Compute the cutoff date in JS to avoid any string interpolation in SQL
 				const cutoff = new Date(Date.now() - days * 86400000).toISOString().substring(0, 10);
 				const { results } = await env.oura_db.prepare('SELECT * FROM daily_summaries WHERE day >= ? ORDER BY day ASC').bind(cutoff).all();
-				return withCors(
+				return cors(
 					new Response(JSON.stringify(results), {
 						headers: {
 							'Content-Type': 'application/json',
@@ -1010,15 +1033,88 @@ export default {
 							'Cache-Control': `private, max-age=${RESPONSE_CACHE_TTL}`,
 						},
 					}),
-					origin,
 				);
 			} catch (err) {
-				return withCors(Response.json({ error: 'D1 query failed', details: String(err).slice(0, 500) }, { status: 500 }), origin);
+				return cors(Response.json({ error: 'D1 query failed', details: String(err).slice(0, 500) }, { status: 500 }));
+			}
+		}
+
+		// Public status page — no auth required, shows pipeline health at a glance
+		if (url.pathname === '/status') {
+			try {
+				const [lastSync, statsResult] = await Promise.all([
+					env.OURA_CACHE
+						? (env.OURA_CACHE.get('sync:last_success', 'json') as Promise<Record<string, unknown> | null>)
+						: Promise.resolve(null),
+					env.oura_db.prepare('SELECT resource, record_count, max_day, updated_at FROM table_stats ORDER BY resource').all(),
+				]);
+
+				const stats = statsResult.results as Array<{
+					resource: string;
+					record_count: number;
+					max_day: string | null;
+					updated_at: string | null;
+				}>;
+				const isHealthy = lastSync !== null;
+				const lastSyncTime = lastSync?.timestamp as string | undefined;
+				const lastSyncAgo = lastSyncTime ? Math.round((Date.now() - new Date(lastSyncTime).getTime()) / 60000) : null;
+
+				const tableRows = stats.length
+					? stats
+							.map(
+								(r) =>
+									`\t\t\t<tr><td>${r.resource}</td><td>${r.record_count?.toLocaleString() ?? '—'}</td><td>${r.max_day ?? '—'}</td></tr>`,
+							)
+							.join('\n')
+					: '\t\t\t<tr><td colspan="3"><em>No stats available — run a sync first</em></td></tr>';
+
+				const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Oura Data Pipeline — Status</title>
+	<style>
+		body { font-family: system-ui, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+		h1 { font-size: 1.4rem; margin-bottom: 0.25rem; }
+		.badge { display: inline-block; padding: 0.2rem 0.6rem; border-radius: 4px; font-size: 0.85rem; font-weight: 600; }
+		.ok { background: #d1fae5; color: #065f46; }
+		.unknown { background: #fef3c7; color: #92400e; }
+		table { width: 100%; border-collapse: collapse; margin-top: 1rem; font-size: 0.9rem; }
+		th, td { padding: 0.45rem 0.6rem; border: 1px solid #e5e7eb; text-align: left; }
+		th { background: #f9fafb; font-weight: 600; }
+		.meta { color: #6b7280; font-size: 0.8rem; margin-top: 1.5rem; }
+	</style>
+</head>
+<body>
+	<h1>💍 Oura Data Pipeline</h1>
+	<p>
+		Status: <span class="badge ${isHealthy ? 'ok' : 'unknown'}">${isHealthy ? 'Operational' : 'Unknown'}</span>
+		${lastSyncTime ? `&nbsp;&nbsp;Last sync: ${lastSyncAgo !== null ? `${lastSyncAgo}m ago` : lastSyncTime}` : '&nbsp;&nbsp;No sync recorded yet'}
+	</p>
+	<table>
+		<thead><tr><th>Table</th><th>Records</th><th>Latest Day</th></tr></thead>
+		<tbody>
+${tableRows}
+		</tbody>
+	</table>
+	<p class="meta">v${__APP_VERSION__} &nbsp;·&nbsp; Syncs at 01:00, 12:00, 18:00 UTC &nbsp;·&nbsp; <a href="/health">health</a></p>
+</body>
+</html>`;
+
+				return new Response(html, {
+					headers: {
+						'Content-Type': 'text/html; charset=utf-8',
+						'Cache-Control': 'public, max-age=300',
+					},
+				});
+			} catch (err) {
+				return new Response('Status page error', { status: 500 });
 			}
 		}
 
 		// No matching endpoint
-		return withCors(Response.json({ error: 'Not Found' }, { status: 404 }), origin);
+		return cors(Response.json({ error: 'Not Found' }, { status: 404 }));
 	},
 };
 
@@ -1157,7 +1253,6 @@ async function saveToD1(env: Env, endpoint: string, data: Record<string, any>[])
 		'heartrate',
 		'workout',
 		'session',
-		'tag',
 		'enhanced_tag',
 		'rest_mode_period',
 		'sleep_time',
@@ -1486,23 +1581,6 @@ async function saveToD1(env: Env, endpoint: string, data: Record<string, any>[])
 		if (stmts.length) await env.oura_db.batch(stmts);
 	}
 
-	// tag -> user_tags
-	if (normalizedEndpoint === 'tag') {
-		const stmt = env.oura_db.prepare(
-			`INSERT INTO user_tags (id, day, tag_type, comment)
-			VALUES (?, ?, ?, ?)
-			ON CONFLICT(id) DO UPDATE SET
-				day=excluded.day,
-				tag_type=excluded.tag_type,
-				comment=excluded.comment`,
-		);
-		const stmts = [];
-		for (const d of data) {
-			stmts.push(stmt.bind(d.id, d.day ?? null, d.tag_type_code ?? d.tags?.[0] ?? null, d.comment ?? null));
-		}
-		if (stmts.length) await env.oura_db.batch(stmts);
-	}
-
 	// enhanced_tag -> enhanced_tags (richer tag model with duration + custom names)
 	if (normalizedEndpoint === 'enhanced_tag') {
 		const stmt = env.oura_db.prepare(
@@ -1651,7 +1729,7 @@ async function ingestResource(env: Env, r: OuraResource, window: { startDate: st
 			throw new Error(`Invalid JSON response from Oura for ${r.resource}`);
 		}
 
-		const apiResponse = json as OuraApiResponse<unknown>;
+		const apiResponse = json as OuraApiResponse<Record<string, unknown>>;
 		const data = apiResponse.data;
 		if (Array.isArray(data) && data.length) {
 			await saveToD1(env, r.resource, data);
@@ -1697,7 +1775,10 @@ async function fetchWithRetry(input: RequestInfo | URL, init: RequestInit, maxRe
 		if (res.status !== 429 && res.status < 500) return res;
 		attempt += 1;
 		if (attempt > maxRetries) return res;
-		const backoffMs = 250 * Math.pow(2, attempt);
+		// Respect Retry-After from API (seconds integer); fall back to exponential backoff
+		const retryAfter = res.headers.get('Retry-After');
+		const backoffMs =
+			retryAfter && /^\d+$/.test(retryAfter.trim()) ? Math.min(parseInt(retryAfter.trim(), 10) * 1000, 60_000) : 250 * Math.pow(2, attempt);
 		await new Promise((r) => setTimeout(r, backoffMs));
 	}
 }
@@ -2276,11 +2357,10 @@ export class BackfillWorkflow extends WorkflowEntrypoint<Env, BackfillParams> {
 	}
 }
 
-function withCors(response: Response, origin: string | null): Response {
+function withCors(response: Response, origin: string | null, allowedOrigins: string[] = DEFAULT_CORS_ORIGINS): Response {
 	const headers = new Headers(response.headers);
 
-	// Use configurable origins (set from env.ALLOWED_ORIGINS at start of fetch())
-	const allowOrigin = origin && _corsOrigins.includes(origin) ? origin : _corsOrigins[0];
+	const allowOrigin = origin && allowedOrigins.includes(origin) ? origin : allowedOrigins[0];
 
 	// CORS headers
 	headers.set('Access-Control-Allow-Origin', allowOrigin);
