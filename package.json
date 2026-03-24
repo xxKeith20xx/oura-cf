@@ -37,7 +37,7 @@
 		"version": "bash scripts/sync-version.sh && git add wrangler.jsonc vitest.config.mts"
 	},
 	"devDependencies": {
-		"@cloudflare/vitest-pool-workers": "^0.12.21",
+		"@cloudflare/vitest-pool-workers": "^0.13.4",
 		"@cloudflare/workers-types": "^4.20260124.0",
 		"@eslint/js": "^9.39.2",
 		"eslint": "^9.39.2",
