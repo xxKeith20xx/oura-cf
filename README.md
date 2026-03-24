@@ -15,7 +15,7 @@ A Cloudflare Worker that syncs Oura Ring health data to a D1 database and serves
 - **Enterprise Security**: Multi-token auth, timing-safe comparison, 3-tier rate limiting, SQL injection prevention, query timeouts
 - **SQL Query Caching**: KV-backed cache with SHA-256 keys, automatic invalidation after sync
 - **Analytics Engine**: Query and auth metrics via Cloudflare Analytics Engine
-- **Status Page**: Public `/status` page showing pipeline health, last sync time, and per-table record counts
+- **Status Page**: `/status` page showing pipeline health, last sync time, and per-table record counts (requires auth)
 - **Sync Health Tracking**: Last successful sync metadata written to KV after every cron run
 - **Cost-Efficient**: Runs within Cloudflare's free tier limits
 - **Test Coverage**: 50 tests (48 passing) covering auth, SQL injection, param validation, CORS, and more
@@ -245,7 +245,6 @@ Oura Docs Page → Discover Spec URL → Fetch OpenAPI Spec → KV Cache (24hr)
 | Endpoint          | Method | Description                                               | Rate Limit        |
 | ----------------- | ------ | --------------------------------------------------------- | ----------------- |
 | `/health`         | GET    | Health check (last sync info with auth; debug with admin) | 1 req/60s per IP  |
-| `/status`         | GET    | Pipeline status page (HTML) — record counts, last sync    | Cached 5 min      |
 | `/favicon.ico`    | GET    | Ring emoji favicon                                        | Cached 1 year     |
 | `/oauth/callback` | GET    | OAuth2 callback handler                                   | 10 req/60s per IP |
 
@@ -253,15 +252,16 @@ Oura Docs Page → Discover Spec URL → Fetch OpenAPI Spec → KV Cache (24hr)
 
 Rate limit: 3000 requests per minute per IP (applies to all authenticated endpoints)
 
-| Endpoint               | Method | Description                         | Cache TTL |
-| ---------------------- | ------ | ----------------------------------- | --------- |
-| `/oauth/start`         | GET    | Initiate Oura OAuth flow            | N/A       |
-| `/backfill`            | GET    | Start backfill workflow (1 req/60s) | N/A       |
-| `/backfill/status`     | GET    | Poll backfill workflow status       | N/A       |
-| `/api/daily_summaries` | GET    | Query daily summaries table         | 5 minutes |
-| `/api/stats`           | GET    | Pre-computed table statistics       | 1 hour    |
-| `/api/sql`             | POST   | Execute read-only SQL queries       | 6 hours   |
-| `/`                    | GET    | All daily summaries (sorted by day) | 5 minutes |
+| Endpoint               | Method | Description                                            | Cache TTL |
+| ---------------------- | ------ | ------------------------------------------------------ | --------- |
+| `/status`              | GET    | Pipeline status page (HTML) — record counts, last sync | 5 minutes |
+| `/oauth/start`         | GET    | Initiate Oura OAuth flow                               | N/A       |
+| `/backfill`            | GET    | Start backfill workflow (1 req/60s)                    | N/A       |
+| `/backfill/status`     | GET    | Poll backfill workflow status                          | N/A       |
+| `/api/daily_summaries` | GET    | Query daily summaries table                            | 5 minutes |
+| `/api/stats`           | GET    | Pre-computed table statistics                          | 1 hour    |
+| `/api/sql`             | POST   | Execute read-only SQL queries                          | 6 hours   |
+| `/`                    | GET    | All daily summaries (sorted by day)                    | 5 minutes |
 
 ### Example: Backfill with Workflows
 

@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Public `/status` page**: HTML status page showing pipeline health, last sync time, and per-table record counts with 5-minute public cache. No auth required.
+- **`/status` page**: HTML status page showing pipeline health, last sync time, and per-table record counts with 5-minute cache. Requires bearer token auth.
 - **Sync health tracking**: Cron handler writes `sync:last_success` to KV after every successful run (timestamp, cron expression, duration). Visible in `/health` (with auth) and `/status`.
 - **`getBearerRole()`**: Role-aware token validation returning `'admin'`, `'grafana'`, or `null`. Admin role unlocks debug output on `/health`.
 - **`scripts/sync-version.sh`**: Version sync script invoked by the `npm version` lifecycle hook — keeps `wrangler.jsonc` and `vitest.config.mts` in sync with `package.json` automatically.

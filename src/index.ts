@@ -1039,7 +1039,7 @@ export default {
 			}
 		}
 
-		// Public status page — no auth required, shows pipeline health at a glance
+		// Status page — requires auth (same as all endpoints below the auth gate)
 		if (url.pathname === '/status') {
 			try {
 				const [lastSync, statsResult] = await Promise.all([
