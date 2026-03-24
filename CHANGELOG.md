@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-03-24
+
+### Added
+
+- **Public `/status` page**: HTML status page showing pipeline health, last sync time, and per-table record counts with 5-minute public cache. No auth required.
+- **Sync health tracking**: Cron handler writes `sync:last_success` to KV after every successful run (timestamp, cron expression, duration). Visible in `/health` (with auth) and `/status`.
+- **`getBearerRole()`**: Role-aware token validation returning `'admin'`, `'grafana'`, or `null`. Admin role unlocks debug output on `/health`.
+- **`scripts/sync-version.sh`**: Version sync script invoked by the `npm version` lifecycle hook — keeps `wrangler.jsonc` and `vitest.config.mts` in sync with `package.json` automatically.
+- **Architecture diagram**: `docs/architecture.svg` and `docs/architecture.excalidraw` added to the repo; embedded in README.
+- **Roadmap section in README**: Checklist of next steps (modular refactor, Hono router, test coverage, D1 backup, export endpoint, Secrets Store).
+
+### Security
+
+- **Health endpoint header leak fixed**: `/health` previously returned all request headers (including `Authorization`) to any caller. Debug info (`request.*`, `cf.*`) is now gated behind `ADMIN_SECRET`. `authorization` and `cookie` headers are always stripped even for admin callers.
+- **`_corsOrigins` mutable global eliminated**: Replaced module-level `let _corsOrigins` (written on every `fetch()`) with `getCorsOrigins(env)` called per-request and a request-scoped `cors()` helper. Removes implicit shared state between requests.
+- **`Retry-After` header respected**: `fetchWithRetry` now honours the `Retry-After: <seconds>` header from the Oura API on 429 responses (capped at 60s), falling back to exponential backoff when absent.
+
+### Changed
+
+- **`user_tags` handler removed** from `saveToD1`: the legacy `tag` endpoint was still writing to the `user_tags` table, which was superseded by `enhanced_tags` in v1.2.0. The handler and `KNOWN_ENDPOINTS` entry have been removed.
+- **TypeScript check enabled in CI** (`checks.yml`): `tsc --noEmit` and `vitest --run` are now part of every push/PR. Fixed the `webworker` lib conflict in `tsconfig.json` that previously blocked this.
+- **`OuraApiResponse` type tightened**: `OuraApiResponse<unknown>` → `OuraApiResponse<Record<string, unknown>>` in `ingestResource`, fixing the last pre-existing TypeScript error.
+
+### Fixed
+
+- **`tsconfig.json` lib conflict**: Removed `"webworker"` from `lib` array — it conflicted with `@cloudflare/workers-types` (which already covers all Workers globals), causing ~50 type errors on `tsc --noEmit`.
+
+### Removed
+
+- **`latest` npm dependency**: Unused runtime dependency (203 transitive packages) removed.
+- **`user_tags` table**: Migration `0010_drop_user_tags.sql` drops the table that was superseded by `enhanced_tags`.
+
 ## [1.3.0] - 2026-03-01
 
 ### Added
