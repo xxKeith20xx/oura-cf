@@ -99,7 +99,7 @@ Oura Ring ──► Oura Cloud API ──► Cloudflare Worker (oura-cf)
                                               │
                                               ▼
                                        Grafana Cloud
-                                       (Infinity DS · 56 panels)
+                                       (Infinity DS · 61 panels)
 
 Cron triggers (01:00, 12:00, 18:00 UTC) ──► Sync Engine
 ```
@@ -324,7 +324,7 @@ Large backfills use [Cloudflare Workflows](https://developers.cloudflare.com/wor
 
 ### Cron Sync (unchanged)
 
-The 3x-daily cron sync (`syncData`) remains inline — it only syncs 3 days of data, well within Workers limits. The Workflow is only used for `/backfill`.
+The hourly cron sync (`syncData`) remains inline — it only syncs 3 days of data, well within Workers limits. The Workflow is only used for `/backfill`.
 
 ## Deployment
 
@@ -382,7 +382,7 @@ Key settings in `wrangler.jsonc`:
 {
 	"compatibility_date": "2026-02-24",
 	"triggers": {
-		"crons": ["0 1,12,18 * * *"], // Sync 3x daily
+		"crons": ["0 * * * *"], // Sync hourly
 	},
 	"workflows": [
 		{
@@ -487,7 +487,7 @@ With Cloudflare Access (recommended):
 
 ### Dashboard Features
 
-- **56 Visualizations** across 11 sections
+- **61 Visualizations** across 12 sections
 - **Time-series panels**: Readiness, sleep, activity trends
 - **Stat panels**: Current scores, latest metrics, sleep timing
 - **Bar charts**: Sleep stages, workout distribution, tag frequency
@@ -607,7 +607,7 @@ oura-cf/
 ├── vitest.config.mts         # Test configuration
 ├── package.json              # Dependencies
 ├── tsconfig.json             # TypeScript config
-├── grafana-dashboard-structured.json  # Grafana dashboard (56 panels)
+├── grafana-dashboard-structured.json  # Grafana dashboard (61 panels)
 ├── CHANGELOG.md              # Version history
 ├── CONTRIBUTING.md           # Contribution guidelines
 └── README.md                 # This file
