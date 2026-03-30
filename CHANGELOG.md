@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`vitest` upgraded to v4.1.x** and **`@cloudflare/vitest-pool-workers` upgraded to 0.13.5** to resolve 4 high-severity `undici` CVEs (GHSA-f269-vfmq-vjvj, GHSA-2mjp-6q6p-2qxm, GHSA-vrm6-8vpv-qv8q, GHSA-v9p9-hfj2-hcw8). `vitest.config.mts` migrated from deprecated `defineWorkersConfig` to `defineConfig` + `cloudflareTest` plugin API.
 - **Grafana: Sleep Deep Dive restructured** — deep sleep panels promoted to the top of the section; raw physiological metrics (respiratory rate, restless periods, temperature deviation, awake duration, breathing disturbance) moved into a new collapsed "Sleep Physiology" row.
 - **Grafana: Collapsed secondary rows** — Scores, Correlations (Timeseries), Tags & Annotations, and Data Coverage rows now collapse by default to reduce visual noise.
 - **Cron schedule changed to hourly** — `0 * * * *` replaces the previous 3x-daily schedule (`0 1,12,18 * * *`). D1 and API usage remain within free tier limits.
