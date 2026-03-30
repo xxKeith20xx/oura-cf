@@ -9,9 +9,9 @@ A Cloudflare Worker that syncs Oura Ring health data to a D1 database and serves
 ## Features
 
 - **Complete Data Coverage**: Syncs all Oura Ring v2 API endpoints (18+ resources)
-- **Automated Sync**: Cron-based data updates (3x daily: 1am, 12pm, 6pm)
+- **Automated Sync**: Hourly cron-based data updates
 - **Durable Backfill**: Cloudflare Workflows for reliable, retryable historical data sync
-- **Grafana Integration**: Pre-built dashboard with 56 visualizations
+- **Grafana Integration**: Pre-built dashboard with 61 visualizations
 - **Enterprise Security**: Multi-token auth, timing-safe comparison, 3-tier rate limiting, SQL injection prevention, query timeouts
 - **SQL Query Caching**: KV-backed cache with SHA-256 keys, automatic invalidation after sync
 - **Analytics Engine**: Query and auth metrics via Cloudflare Analytics Engine

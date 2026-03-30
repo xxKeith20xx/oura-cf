@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.1] - 2026-03-30
+
+### Added
+
+- **Grafana: Deep Sleep % panel** — nightly deep sleep as a percentage of total sleep with 7-day and 28-day rolling averages and healthy-range threshold bands (panel-1216).
+- **Grafana: Avg Deep Sleep (30d) stat** — 30-day average deep sleep hours with red/yellow/green thresholds (panel-1217).
+- **Grafana: Avg Deep Sleep % (30d) stat** — 30-day average deep sleep percentage with threshold colouring (panel-1218).
+- **Grafana: Sleep Stage Mix % chart** — 100% stacked bar chart showing nightly Deep/REM/Light/Awake composition, independent of total sleep duration (panel-1219).
+- **Grafana: Deep Sleep % vs Readiness** — dual-axis time series overlaying deep sleep % against next-day readiness score to surface correlations (panel-1220).
+
+### Changed
+
+- **Grafana: Sleep Deep Dive restructured** — deep sleep panels promoted to the top of the section; raw physiological metrics (respiratory rate, restless periods, temperature deviation, awake duration, breathing disturbance) moved into a new collapsed "Sleep Physiology" row.
+- **Grafana: Collapsed secondary rows** — Scores, Correlations (Timeseries), Tags & Annotations, and Data Coverage rows now collapse by default to reduce visual noise.
+- **Cron schedule changed to hourly** — `0 * * * *` replaces the previous 3x-daily schedule (`0 1,12,18 * * *`). D1 and API usage remain within free tier limits.
+
 ## [1.4.0] - 2026-03-24
 
 ### Added
