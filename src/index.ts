@@ -19,7 +19,8 @@ export interface Env {
 	BACKFILL_WORKFLOW: Workflow; // Workflows binding for durable backfill orchestration
 	ALLOWED_ORIGINS?: string; // Comma-separated CORS origins (default: https://oura.keith20.dev)
 	MAX_QUERY_ROWS?: string; // Maximum rows to return from SQL queries (default: 50000)
-	QUERY_TIMEOUT_MS?: string; // Query timeout in milliseconds (default: 10000)
+	QUERY_TIMEOUT_MS?: string; // Query timeout in milliseconds (default: 7000)
+	LOG_SQL_PREVIEW?: string; // Set to 'false' to disable SQL preview in logs/analytics
 }
 
 type OuraQueryMode = 'none' | 'date' | 'datetime';
@@ -59,6 +60,34 @@ interface OuraTokenResponse {
 interface OuraApiResponse<T> {
 	data: T[];
 	next_token?: string;
+}
+
+type JsonRecord = Record<string, unknown>;
+
+function isJsonRecord(value: unknown): value is JsonRecord {
+	return typeof value === 'object' && value !== null;
+}
+
+function toJsonRecord(value: unknown): JsonRecord {
+	return isJsonRecord(value) ? value : {};
+}
+
+async function pseudonymizeForLogs(value: string): Promise<string> {
+	const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+	const hex = Array.from(new Uint8Array(digest))
+		.map((b) => b.toString(16).padStart(2, '0'))
+		.join('');
+	return `h:${hex.slice(0, 12)}`;
+}
+
+function getSqlPreview(sql: string, enabled: boolean): string {
+	if (!enabled) return '[disabled]';
+	const compact = sql.replace(/\s+/g, ' ').trim();
+	const redacted = compact
+		.replace(/'(?:''|[^'])*'/g, "'?'")
+		.replace(/"(?:""|[^"])*"/g, '"?"')
+		.replace(/\b\d{4,}\b/g, '?');
+	return redacted.slice(0, 120);
 }
 
 // In-memory cache for OAuth tokens (reset on cold start)
@@ -150,8 +179,9 @@ async function validateBearerToken(authHeader: string | null, env: Env): Promise
 }
 
 // Security: Log authentication attempt and write to Analytics Engine
-function logAuthAttempt(success: boolean, request: Request, details?: string, analytics?: AnalyticsEngineDataset): void {
+async function logAuthAttempt(success: boolean, request: Request, env: Env, details?: string): Promise<void> {
 	const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
+	const ipHash = await pseudonymizeForLogs(clientIP);
 	const userAgent = request.headers.get('User-Agent') || 'unknown';
 	const cfData = request.cf as IncomingRequestCfProperties | undefined;
 
@@ -159,7 +189,7 @@ function logAuthAttempt(success: boolean, request: Request, details?: string, an
 		JSON.stringify({
 			type: 'auth_attempt',
 			success,
-			ip: clientIP,
+			ipHash,
 			country: cfData?.country || 'unknown',
 			userAgent: userAgent.slice(0, 200),
 			url: new URL(request.url).pathname,
@@ -167,32 +197,34 @@ function logAuthAttempt(success: boolean, request: Request, details?: string, an
 		}),
 	);
 
-	if (analytics) {
-		analytics.writeDataPoint({
+	if (env.OURA_ANALYTICS) {
+		env.OURA_ANALYTICS.writeDataPoint({
 			indexes: ['auth'],
 			doubles: [success ? 1 : 0],
-			blobs: [clientIP, (cfData?.country as string) || 'unknown', new URL(request.url).pathname, details || ''],
+			blobs: [ipHash, (cfData?.country as string) || 'unknown', new URL(request.url).pathname, details || ''],
 		});
 	}
 }
 
 // Security: Log SQL query execution and write to Analytics Engine
-function logSqlQuery(
+async function logSqlQuery(
 	request: Request,
 	sql: string,
 	params: unknown[],
 	executionTimeMs: number,
 	rowCount: number,
+	env: Env,
 	error?: string,
-	analytics?: AnalyticsEngineDataset,
-): void {
+): Promise<void> {
 	const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
+	const ipHash = await pseudonymizeForLogs(clientIP);
+	const sqlPreview = getSqlPreview(sql, (env.LOG_SQL_PREVIEW ?? 'true').toLowerCase() !== 'false');
 
 	console.log(
 		JSON.stringify({
 			type: 'sql_query',
-			ip: clientIP,
-			sqlPreview: sql.slice(0, 200),
+			ipHash,
+			sqlPreview,
 			sqlLength: sql.length,
 			paramCount: params.length,
 			executionTimeMs,
@@ -202,11 +234,11 @@ function logSqlQuery(
 	);
 
 	// Write to Analytics Engine (non-blocking, fire-and-forget)
-	if (analytics) {
-		analytics.writeDataPoint({
+	if (env.OURA_ANALYTICS) {
+		env.OURA_ANALYTICS.writeDataPoint({
 			indexes: ['sql_query'],
 			doubles: [executionTimeMs, rowCount, sql.length, error ? 1 : 0],
-			blobs: [sql.slice(0, 200), clientIP, rowCount === -1 ? 'cache_hit' : 'cache_miss', error || ''],
+			blobs: [sqlPreview, ipHash, rowCount === -1 ? 'cache_hit' : 'cache_miss', error || ''],
 		});
 	}
 }
@@ -221,9 +253,13 @@ const RESPONSE_CACHE_TTL = 300; // 5 minutes (use 'private' cache for authentica
 const SQL_KV_CACHE_TTL = 21600; // 6 hours KV cache for SQL query results (data changes ~2-3x/day via cron)
 const STATS_KV_CACHE_TTL = 21600; // 6 hours KV cache for stats/metadata queries
 const DEFAULT_MAX_QUERY_ROWS = 50_000; // Default max rows for SQL queries
-const DEFAULT_QUERY_TIMEOUT_MS = 10_000; // Default query timeout (10 seconds)
+const DEFAULT_QUERY_TIMEOUT_MS = 7_000; // Default query timeout (7 seconds)
+const MIN_QUERY_TIMEOUT_MS = 1_000; // Clamp to avoid invalid low/negative values
+const MAX_QUERY_TIMEOUT_MS = 15_000; // Clamp to avoid excessively long-running queries
 const MAX_PARAMS = 100; // Maximum SQL parameters
 const MAX_BODY_SIZE = 1_048_576; // 1MB max request body size
+const SYNC_SCHEDULE_DISPLAY = 'Hourly (0 * * * * UTC)';
+const SYNC_RESOURCE_CONCURRENCY = 4; // Parallel resources per sync run
 const DEFAULT_CORS_ORIGINS = ['https://oura.keith20.dev', 'http://localhost:3000', 'http://localhost:8787'];
 
 // Derive CORS origins from env each request — no mutable module-level state.
@@ -318,6 +354,34 @@ async function retryWithBackoff<T>(fn: () => Promise<T>, options: { maxRetries: 
 	}
 
 	throw lastError;
+}
+
+async function mapWithConcurrency<T, R>(
+	items: T[],
+	concurrency: number,
+	worker: (item: T, index: number) => Promise<R>,
+): Promise<PromiseSettledResult<R>[]> {
+	if (items.length === 0) return [];
+
+	const limit = Math.max(1, Math.min(concurrency, items.length));
+	const results: PromiseSettledResult<R>[] = new Array(items.length);
+	let nextIndex = 0;
+
+	const run = async () => {
+		while (true) {
+			const index = nextIndex++;
+			if (index >= items.length) return;
+			try {
+				const value = await worker(items[index], index);
+				results[index] = { status: 'fulfilled', value };
+			} catch (reason) {
+				results[index] = { status: 'rejected', reason };
+			}
+		}
+	};
+
+	await Promise.all(Array.from({ length: limit }, () => run()));
+	return results;
 }
 
 export default {
@@ -537,16 +601,16 @@ export default {
 			const { success: unauthRateLimit } = await env.UNAUTH_RATE_LIMITER.limit({ key: unauthRateLimitKey });
 
 			if (!unauthRateLimit) {
-				logAuthAttempt(false, request, 'Rate limit exceeded (unauthenticated)', env.OURA_ANALYTICS);
+				await logAuthAttempt(false, request, env, 'Rate limit exceeded (unauthenticated)');
 				return cors(Response.json({ error: 'Rate limit exceeded. Please wait before retrying.' }, { status: 429 }));
 			}
 
-			logAuthAttempt(false, request, 'Invalid or missing token', env.OURA_ANALYTICS);
+			await logAuthAttempt(false, request, env, 'Invalid or missing token');
 			return cors(Response.json({ error: 'Unauthorized' }, { status: 401 }));
 		}
 
 		// Authentication successful - log it
-		logAuthAttempt(true, request, undefined, env.OURA_ANALYTICS);
+		await logAuthAttempt(true, request, env);
 
 		// Rate limit authenticated endpoints to prevent abuse if token leaks
 		// Allows 3000 requests per minute per IP + token combination (50 per second sustained)
@@ -773,7 +837,7 @@ export default {
 
 				// Validation: Read-only queries only
 				if (!isReadOnlySql(sql)) {
-					logSqlQuery(request, sql, params, Date.now() - queryStartTime, 0, 'Query blocked: not read-only', env.OURA_ANALYTICS);
+					await logSqlQuery(request, sql, params, Date.now() - queryStartTime, 0, env, 'Query blocked: not read-only');
 					return cors(Response.json({ error: 'Only read-only SQL queries are allowed' }, { status: 400 }));
 				}
 
@@ -812,7 +876,7 @@ export default {
 					const cached = await env.OURA_CACHE.get(cacheKey);
 					if (cached) {
 						const executionTime = Date.now() - queryStartTime;
-						logSqlQuery(request, sql, params, executionTime, -1, undefined, env.OURA_ANALYTICS); // -1 = cache hit
+						await logSqlQuery(request, sql, params, executionTime, -1, env); // -1 = cache hit
 						return cors(
 							new Response(cached, {
 								headers: {
@@ -832,7 +896,8 @@ export default {
 				const parsedMaxRows = env.MAX_QUERY_ROWS ? parseInt(env.MAX_QUERY_ROWS, 10) : NaN;
 				const maxRows = Number.isFinite(parsedMaxRows) ? parsedMaxRows : DEFAULT_MAX_QUERY_ROWS;
 				const parsedTimeout = env.QUERY_TIMEOUT_MS ? parseInt(env.QUERY_TIMEOUT_MS, 10) : NaN;
-				const timeoutMs = Number.isFinite(parsedTimeout) ? parsedTimeout : DEFAULT_QUERY_TIMEOUT_MS;
+				const timeoutCandidate = Number.isFinite(parsedTimeout) ? parsedTimeout : DEFAULT_QUERY_TIMEOUT_MS;
+				const timeoutMs = Math.max(MIN_QUERY_TIMEOUT_MS, Math.min(timeoutCandidate, MAX_QUERY_TIMEOUT_MS));
 
 				// Inject or cap LIMIT to prevent D1 from reading unlimited rows.
 				// This avoids reading rows that would just be rejected by the post-query row-count check.
@@ -877,7 +942,7 @@ export default {
 
 				// Security: Enforce row limit
 				if (rowCount > maxRows) {
-					logSqlQuery(request, sql, params, executionTime, rowCount, `Too many rows returned: ${rowCount}`, env.OURA_ANALYTICS);
+					await logSqlQuery(request, sql, params, executionTime, rowCount, env, `Too many rows returned: ${rowCount}`);
 					return cors(
 						Response.json(
 							{
@@ -890,7 +955,7 @@ export default {
 				}
 
 				// Log successful query
-				logSqlQuery(request, sql, params, executionTime, rowCount, undefined, env.OURA_ANALYTICS);
+				await logSqlQuery(request, sql, params, executionTime, rowCount, env);
 
 				// Use longer HTTP cache for stats queries (1 hour vs 5 minutes)
 				const httpCacheTTL = isStatsQuery ? 3600 : RESPONSE_CACHE_TTL;
@@ -920,7 +985,7 @@ export default {
 				const errorMessage = err instanceof Error ? err.message : String(err);
 
 				// Log failed query
-				logSqlQuery(request, sql, params, executionTime, 0, errorMessage, env.OURA_ANALYTICS);
+				await logSqlQuery(request, sql, params, executionTime, 0, env, errorMessage);
 
 				// Security: Don't leak detailed database errors to clients
 				if (errorMessage.includes('timeout')) {
@@ -1098,7 +1163,7 @@ export default {
 ${tableRows}
 		</tbody>
 	</table>
-	<p class="meta">v${__APP_VERSION__} &nbsp;·&nbsp; Syncs at 01:00, 12:00, 18:00 UTC &nbsp;·&nbsp; <a href="/health">health</a></p>
+	<p class="meta">v${__APP_VERSION__} &nbsp;·&nbsp; Sync: ${SYNC_SCHEDULE_DISPLAY} &nbsp;·&nbsp; <a href="/health">health</a></p>
 </body>
 </html>`;
 
@@ -1123,39 +1188,36 @@ async function syncData(env: Env, totalDays: number, offsetDays = 0, resourceFil
 	const resourcesAll = await loadOuraResourcesFromOpenApi(env);
 	const resources = resourceFilter ? resourcesAll.filter((r) => resourceFilter.has(r.resource)) : resourcesAll;
 
-	// Process all resources in parallel for faster syncs
-	// Rate limit: 5000 req/5min (1000 req/min), we're using ~18 resources = well under limit
-	const results = await Promise.allSettled(
-		resources.map(async (r) => {
-			try {
-				if (r.queryMode === 'none') {
-					await ingestResource(env, r, null);
-					return { resource: r.resource, success: true, requests: 1 };
-				}
-
-				const chunkDays = getChunkDaysForResource(r);
-				let requestCount = 0;
-
-				// Process time windows sequentially per resource to avoid pagination issues
-				for (let i = 0; i < totalDays; i += chunkDays) {
-					const windowDays = Math.min(chunkDays, totalDays - i);
-					const start = new Date(Date.now() - (offsetDays + i + windowDays) * 86400000).toISOString().split('T')[0];
-					const end = new Date(Date.now() - (offsetDays + i) * 86400000).toISOString().split('T')[0];
-					await ingestResource(env, r, { startDate: start, endDate: end });
-					requestCount++;
-				}
-
-				return { resource: r.resource, success: true, requests: requestCount };
-			} catch (err) {
-				console.error('Resource sync failed', {
-					resource: r.resource,
-					error: err instanceof Error ? err.message : String(err),
-					stack: err instanceof Error ? err.stack : undefined,
-				});
-				return { resource: r.resource, success: false, error: err };
+	// Process resources with bounded concurrency to avoid API/database bursts.
+	const results = await mapWithConcurrency(resources, SYNC_RESOURCE_CONCURRENCY, async (r) => {
+		try {
+			if (r.queryMode === 'none') {
+				await ingestResource(env, r, null);
+				return { resource: r.resource, success: true, requests: 1 };
 			}
-		}),
-	);
+
+			const chunkDays = getChunkDaysForResource(r);
+			let requestCount = 0;
+
+			// Process time windows sequentially per resource to avoid pagination issues
+			for (let i = 0; i < totalDays; i += chunkDays) {
+				const windowDays = Math.min(chunkDays, totalDays - i);
+				const start = new Date(Date.now() - (offsetDays + i + windowDays) * 86400000).toISOString().split('T')[0];
+				const end = new Date(Date.now() - (offsetDays + i) * 86400000).toISOString().split('T')[0];
+				await ingestResource(env, r, { startDate: start, endDate: end });
+				requestCount++;
+			}
+
+			return { resource: r.resource, success: true, requests: requestCount };
+		} catch (err) {
+			console.error('Resource sync failed', {
+				resource: r.resource,
+				error: err instanceof Error ? err.message : String(err),
+				stack: err instanceof Error ? err.stack : undefined,
+			});
+			return { resource: r.resource, success: false, error: err };
+		}
+	});
 
 	// Log sync summary
 	const successful = results.filter((r) => r.status === 'fulfilled' && r.value.success).length;
@@ -1236,8 +1298,7 @@ const RESOURCE_ALIASES: Record<string, string> = {
 	vO2_max: 'vo2_max',
 };
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function saveToD1(env: Env, endpoint: string, data: Record<string, any>[]) {
+async function saveToD1(env: Env, endpoint: string, data: JsonRecord[]) {
 	// Normalize endpoint name to handle API version renames
 	const normalizedEndpoint = RESOURCE_ALIASES[endpoint] ?? endpoint;
 	const KNOWN_ENDPOINTS = new Set([
@@ -1277,7 +1338,7 @@ async function saveToD1(env: Env, endpoint: string, data: Record<string, any>[])
 		);
 		const stmts = [];
 		for (const d of data) {
-			const c = d?.contributors ?? {};
+			const c = toJsonRecord(d.contributors);
 			stmts.push(
 				stmt.bind(
 					d.day,
@@ -1314,7 +1375,7 @@ async function saveToD1(env: Env, endpoint: string, data: Record<string, any>[])
 		);
 		const stmts = [];
 		for (const d of data) {
-			const c = d?.contributors ?? {};
+			const c = toJsonRecord(d.contributors);
 			stmts.push(
 				stmt.bind(
 					d.day,
@@ -1352,7 +1413,7 @@ async function saveToD1(env: Env, endpoint: string, data: Record<string, any>[])
 		);
 		const stmts = [];
 		for (const d of data) {
-			const c = d?.contributors ?? {};
+			const c = toJsonRecord(d.contributors);
 			stmts.push(
 				stmt.bind(
 					d.day,
@@ -1401,7 +1462,7 @@ async function saveToD1(env: Env, endpoint: string, data: Record<string, any>[])
 		);
 		const stmts = [];
 		for (const d of data) {
-			const c = d?.contributors ?? {};
+			const c = toJsonRecord(d.contributors);
 			stmts.push(stmt.bind(d.day, d.level ?? null, toInt(c.sleep_recovery), toInt(c.daytime_recovery)));
 		}
 		if (stmts.length) await env.oura_db.batch(stmts);
@@ -1419,7 +1480,8 @@ async function saveToD1(env: Env, endpoint: string, data: Record<string, any>[])
 		);
 		const stmts = [];
 		for (const d of data) {
-			stmts.push(stmt.bind(d.day, toReal(d.spo2_percentage?.average), toInt(d.breathing_disturbance_index)));
+			const spo2 = toJsonRecord(d.spo2_percentage);
+			stmts.push(stmt.bind(d.day, toReal(spo2.average), toInt(d.breathing_disturbance_index)));
 		}
 		if (stmts.length) await env.oura_db.batch(stmts);
 	}
@@ -1480,6 +1542,7 @@ async function saveToD1(env: Env, endpoint: string, data: Record<string, any>[])
 		);
 		const stmts = [];
 		for (const d of data) {
+			const readiness = toJsonRecord(d.readiness);
 			stmts.push(
 				stmt.bind(
 					d.id,
@@ -1491,7 +1554,7 @@ async function saveToD1(env: Env, endpoint: string, data: Record<string, any>[])
 					toReal(d.lowest_heart_rate),
 					toReal(d.average_hrv),
 					toReal(d.average_breath),
-					toReal(d.readiness?.temperature_deviation ?? d.temperature_deviation),
+					toReal(readiness.temperature_deviation ?? d.temperature_deviation),
 					toInt(d.deep_sleep_duration),
 					toInt(d.rem_sleep_duration),
 					toInt(d.light_sleep_duration),
@@ -1574,8 +1637,9 @@ async function saveToD1(env: Env, endpoint: string, data: Record<string, any>[])
 		);
 		const stmts = [];
 		for (const d of data) {
+			const heartRate = toJsonRecord(d.heart_rate);
 			stmts.push(
-				stmt.bind(d.id, d.start_datetime ?? null, d.end_datetime ?? null, d.type ?? null, toReal(d.heart_rate?.average), d.mood ?? null),
+				stmt.bind(d.id, d.start_datetime ?? null, d.end_datetime ?? null, d.type ?? null, toReal(heartRate.average), d.mood ?? null),
 			);
 		}
 		if (stmts.length) await env.oura_db.batch(stmts);
@@ -1814,6 +1878,9 @@ async function discoverOpenApiSpecUrl(): Promise<string> {
 }
 
 async function loadOuraResourcesFromOpenApi(env: Env): Promise<OuraResource[]> {
+	type OpenApiOperation = { parameters?: unknown };
+	type OpenApiPaths = Record<string, JsonRecord>;
+
 	// Try KV cache first (24 hour TTL)
 	try {
 		const cached = await env.OURA_CACHE.get('openapi_resources', 'json');
@@ -1839,8 +1906,9 @@ async function loadOuraResourcesFromOpenApi(env: Env): Promise<OuraResource[]> {
 		});
 		throw new Error(`Failed to fetch Oura OpenAPI spec: ${res.status} ${res.statusText} from ${specUrl}`);
 	}
-	const spec = (await res.json().catch(() => null)) as any;
-	const paths = spec?.paths && typeof spec.paths === 'object' ? spec.paths : {};
+	const spec = (await res.json().catch(() => null)) as unknown;
+	const specObj = toJsonRecord(spec);
+	const paths = isJsonRecord(specObj.paths) ? (specObj.paths as OpenApiPaths) : {};
 	const out: OuraResource[] = [];
 	const forceDateWindow = new Set(['sleep', 'sleep_time', 'workout']);
 
@@ -1849,15 +1917,22 @@ async function loadOuraResourcesFromOpenApi(env: Env): Promise<OuraResource[]> {
 		if (!path.startsWith('/v2/usercollection/')) continue;
 		if (path.startsWith('/v2/sandbox/')) continue;
 		if (path.includes('{')) continue;
-		if (!methods || typeof methods !== 'object') continue;
-		const getDef = (methods as any).get;
+		if (!isJsonRecord(methods)) continue;
+		const getDef = methods.get as OpenApiOperation | undefined;
 		if (!getDef) continue;
 
 		const resource = path.replace('/v2/usercollection/', '');
 		if (!resource) continue;
 
 		const params = Array.isArray(getDef.parameters) ? getDef.parameters : [];
-		const paramNames = new Set(params.map((p: any) => (typeof p?.name === 'string' ? p.name : null)).filter(Boolean));
+		const paramNames = new Set(
+			params
+				.map((p) => {
+					const param = toJsonRecord(p);
+					return typeof param.name === 'string' ? param.name : null;
+				})
+				.filter((name): name is string => typeof name === 'string'),
+		);
 
 		let queryMode: OuraQueryMode = 'none';
 		if (paramNames.has('start_datetime') || paramNames.has('end_datetime')) {

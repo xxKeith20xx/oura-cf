@@ -363,16 +363,17 @@ npx wrangler deploy
 
 ### Environment Variables (Secrets)
 
-| Secret               | Required | Description                                     |
-| -------------------- | -------- | ----------------------------------------------- |
-| `GRAFANA_SECRET`     | Yes      | Bearer token for Grafana datasource auth        |
-| `ADMIN_SECRET`       | No       | Separate token for manual admin operations      |
-| `OURA_CLIENT_ID`     | Yes      | OAuth2 client ID from Oura developer portal     |
-| `OURA_CLIENT_SECRET` | Yes      | OAuth2 client secret from Oura developer portal |
-| `OURA_PAT`           | No       | Personal access token (alternative to OAuth)    |
-| `ALLOWED_ORIGINS`    | No       | Comma-separated CORS origins                    |
-| `MAX_QUERY_ROWS`     | No       | Maximum rows from SQL queries (default: 50000)  |
-| `QUERY_TIMEOUT_MS`   | No       | Query timeout in milliseconds (default: 10000)  |
+| Secret               | Required | Description                                                          |
+| -------------------- | -------- | -------------------------------------------------------------------- |
+| `GRAFANA_SECRET`     | Yes      | Bearer token for Grafana datasource auth                             |
+| `ADMIN_SECRET`       | No       | Separate token for manual admin operations                           |
+| `OURA_CLIENT_ID`     | Yes      | OAuth2 client ID from Oura developer portal                          |
+| `OURA_CLIENT_SECRET` | Yes      | OAuth2 client secret from Oura developer portal                      |
+| `OURA_PAT`           | No       | Personal access token (alternative to OAuth)                         |
+| `ALLOWED_ORIGINS`    | No       | Comma-separated CORS origins                                         |
+| `MAX_QUERY_ROWS`     | No       | Maximum rows from SQL queries (default: 50000)                       |
+| `QUERY_TIMEOUT_MS`   | No       | Query timeout in milliseconds (default: 7000, clamped to 1000-15000) |
+| `LOG_SQL_PREVIEW`    | No       | Set `false` to disable SQL preview text in logs/analytics            |
 
 ### Wrangler Configuration
 

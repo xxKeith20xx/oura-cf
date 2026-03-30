@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.2] - 2026-03-30
+
+### Changed
+
+- **SQL query timeout tightened**: default timeout reduced from 10s to 7s, with safe clamping to 1-15s via `QUERY_TIMEOUT_MS`.
+- **Sync fan-out bounded**: resource sync now uses controlled concurrency (4 resources in parallel) instead of unbounded parallel execution, reducing API and D1 burst pressure.
+- **Status page sync label fixed**: `/status` now correctly reports hourly sync schedule (`0 * * * * UTC`).
+- **Type safety improved**: removed `any` usage in OpenAPI resource parsing and `saveToD1` ingestion paths with safer record guards.
+- **Logging privacy hardening**: auth and SQL logs now pseudonymize client IPs, redact SQL preview literals, and support `LOG_SQL_PREVIEW=false`.
+
+### Documentation
+
+- **README updated** with timeout clamping details and new `LOG_SQL_PREVIEW` environment variable.
+
 ## [1.4.1] - 2026-03-30
 
 ### Added
@@ -392,6 +406,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Security review documentation
 - Performance optimization guides
 
+[1.4.2]: https://github.com/xxKeith20xx/oura-cf/compare/v1.4.1...v1.4.2
 [1.4.1]: https://github.com/xxKeith20xx/oura-cf/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/xxKeith20xx/oura-cf/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/xxKeith20xx/oura-cf/compare/v1.2.0...v1.3.0
