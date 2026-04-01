@@ -52,7 +52,7 @@ describe('Health Endpoint', () => {
 		const data = (await response.json()) as any;
 		expect(data).toMatchObject({
 			status: 'ok',
-			version: '1.4.2',
+			version: '1.4.3',
 		});
 		expect(data.timestamp).toBeDefined();
 		// request debug info is admin-only — not present without auth

@@ -258,7 +258,7 @@ const MIN_QUERY_TIMEOUT_MS = 1_000; // Clamp to avoid invalid low/negative value
 const MAX_QUERY_TIMEOUT_MS = 15_000; // Clamp to avoid excessively long-running queries
 const MAX_PARAMS = 100; // Maximum SQL parameters
 const MAX_BODY_SIZE = 1_048_576; // 1MB max request body size
-const SYNC_SCHEDULE_DISPLAY = 'Hourly (0 * * * * UTC)';
+const SYNC_SCHEDULE_DISPLAY = 'Every 2 hours (0 */2 * * * UTC)';
 const SYNC_RESOURCE_CONCURRENCY = 4; // Parallel resources per sync run
 const DEFAULT_CORS_ORIGINS = ['https://oura.keith20.dev', 'http://localhost:3000', 'http://localhost:8787'];
 
@@ -2212,8 +2212,29 @@ function stripLeadingSqlComments(sql: string): string {
 	}
 }
 
-async function updateTableStats(env: Env): Promise<void> {
+/**
+ * Refresh table_stats with COUNT/MIN/MAX from each table.
+ * This is expensive (full-table scans on heart_rate_samples, etc.), so by
+ * default we gate it behind a KV cooldown. Pass `force: true` from backfill
+ * or explicit refresh paths to bypass the cooldown.
+ */
+const STATS_COOLDOWN_MS = 6 * 3600_000; // 6 hours
+const STATS_COOLDOWN_KEY = 'stats:last_updated';
+
+async function updateTableStats(env: Env, { force = false }: { force?: boolean } = {}): Promise<void> {
 	try {
+		// Gate: skip the expensive refresh if we updated recently (unless forced)
+		if (!force && env.OURA_CACHE) {
+			const lastUpdated = await env.OURA_CACHE.get(STATS_COOLDOWN_KEY);
+			if (lastUpdated && Date.now() - Number(lastUpdated) < STATS_COOLDOWN_MS) {
+				console.log('Skipping table stats refresh (cooldown active)', {
+					lastUpdated: new Date(Number(lastUpdated)).toISOString(),
+					cooldownMs: STATS_COOLDOWN_MS,
+				});
+				return;
+			}
+		}
+
 		// Compute stats for each table (this is expensive but runs once per sync)
 		const stats = [
 			{
@@ -2288,6 +2309,17 @@ async function updateTableStats(env: Env): Promise<void> {
 
 		if (updateStatements.length) {
 			await env.oura_db.batch(updateStatements);
+		}
+
+		// Record the update timestamp so future cron ticks can skip the refresh
+		if (env.OURA_CACHE) {
+			try {
+				await env.OURA_CACHE.put(STATS_COOLDOWN_KEY, String(Date.now()), {
+					expirationTtl: STATS_COOLDOWN_MS / 1000,
+				});
+			} catch {
+				// Non-fatal — worst case we recompute stats next tick
+			}
 		}
 
 		console.log('Table stats updated successfully', {
@@ -2396,8 +2428,9 @@ export class BackfillWorkflow extends WorkflowEntrypoint<Env, BackfillParams> {
 		}
 
 		// Step 3: Update table stats after all resources are synced
+		// Force refresh since backfill always writes meaningful new data
 		await step.do('update-stats', { retries: { limit: 2, delay: '5 seconds', backoff: 'constant' }, timeout: '30 seconds' }, async () => {
-			await updateTableStats(this.env);
+			await updateTableStats(this.env, { force: true });
 		});
 
 		// Step 4: Flush SQL KV cache so dashboards see fresh data

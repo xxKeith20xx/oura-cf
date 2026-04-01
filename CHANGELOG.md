@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.3] - 2026-04-01
+
+### Fixed
+
+- **D1 usage regression** — `updateTableStats()` ran 6 full-table `COUNT(*)/MIN/MAX` scans on every cron tick, causing a ~18,700% spike in rows read after the hourly cron change in v1.4.1. Stats refresh is now gated behind a 6-hour KV cooldown (`stats:last_updated`); backfill workflows bypass the cooldown with `force: true`.
+- **Cron schedule reduced to every 2 hours** (`0 */2 * * *`) from hourly — Oura data updates at daily granularity so hourly sync was excessive; this halves D1 query volume while keeping dashboards fresh.
+
 ## [1.4.2] - 2026-03-30
 
 ### Changed

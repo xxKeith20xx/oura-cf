@@ -6,11 +6,11 @@
 	"compatibility_date": "2026-02-24",
 	"compatibility_flags": ["nodejs_compat"],
 	"define": {
-		"__APP_VERSION__": "\"1.4.2\"",
+		"__APP_VERSION__": "\"1.4.3\"",
 	},
 	"workers_dev": false,
 	"triggers": {
-		"crons": ["0 * * * *"],
+		"crons": ["0 */2 * * *"],
 	},
 	"observability": {
 		"enabled": true,
