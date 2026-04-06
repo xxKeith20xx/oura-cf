@@ -23,7 +23,8 @@
 	},
 	"scripts": {
 		"deploy": "wrangler deploy",
-		"deploy:cf": "wrangler d1 migrations apply oura-db --remote && wrangler deploy",
+		"db:optimize": "wrangler d1 execute oura-db --remote --command \"PRAGMA optimize;\"",
+		"deploy:cf": "wrangler d1 migrations apply oura-db --remote && npm run db:optimize && wrangler deploy",
 		"dev": "wrangler dev",
 		"start": "wrangler dev",
 		"test": "vitest",
