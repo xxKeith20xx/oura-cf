@@ -8000,6 +8000,399 @@
 					"version": "12.4.0-21024277089.patch2"
 				}
 			}
+		},
+		"panel-2101": {
+			"kind": "Panel",
+			"spec": {
+				"data": {
+					"kind": "QueryGroup",
+					"spec": {
+						"queries": [
+							{
+								"kind": "PanelQuery",
+								"spec": {
+									"hidden": false,
+									"query": {
+										"datasource": {
+											"name": "ff8a5nfbpai9sc"
+										},
+										"group": "yesoreyeram-infinity-datasource",
+										"kind": "DataQuery",
+										"spec": {
+											"columns": [
+												{
+													"selector": "value",
+													"text": "value",
+													"type": "number"
+												}
+											],
+											"format": "table",
+											"parser": "backend",
+											"root_selector": "results",
+											"source": "url",
+											"type": "json",
+											"url": "https://oura.keith20.dev/api/sql",
+											"url_options": {
+												"body_content_type": "application/json",
+												"body_type": "raw",
+												"data": "{\"sql\": \"SELECT COALESCE(CAST(julianday('now') - julianday(MAX(day)) AS INTEGER), 9999) AS value FROM daily_summaries\", \"params\": []}",
+												"method": "POST"
+											}
+										},
+										"version": "v0"
+									},
+									"refId": "A"
+								}
+							}
+						],
+						"queryOptions": {},
+						"transformations": []
+					}
+				},
+				"description": "How many days behind the latest daily summary row is from today. 0 means current day data is present.",
+				"id": 2101,
+				"links": [],
+				"title": "Daily Summary Lag (days)",
+				"vizConfig": {
+					"group": "stat",
+					"kind": "VizConfig",
+					"spec": {
+						"fieldConfig": {
+							"defaults": {
+								"thresholds": {
+									"mode": "absolute",
+									"steps": [
+										{
+											"color": "green",
+											"value": 0
+										},
+										{
+											"color": "red",
+											"value": 80
+										}
+									]
+								},
+								"unit": "d",
+								"decimals": 0
+							},
+							"overrides": []
+						},
+						"options": {
+							"colorMode": "value",
+							"graphMode": "area",
+							"justifyMode": "auto",
+							"orientation": "auto",
+							"percentChangeColorMode": "standard",
+							"reduceOptions": {
+								"calcs": [
+									"lastNotNull"
+								],
+								"fields": "",
+								"values": false
+							},
+							"showPercentChange": false,
+							"textMode": "auto",
+							"wideLayout": true
+						}
+					},
+					"version": "12.4.0-21024277089.patch2"
+				}
+			}
+		},
+		"panel-2102": {
+			"kind": "Panel",
+			"spec": {
+				"data": {
+					"kind": "QueryGroup",
+					"spec": {
+						"queries": [
+							{
+								"kind": "PanelQuery",
+								"spec": {
+									"hidden": false,
+									"query": {
+										"datasource": {
+											"name": "ff8a5nfbpai9sc"
+										},
+										"group": "yesoreyeram-infinity-datasource",
+										"kind": "DataQuery",
+										"spec": {
+											"columns": [
+												{
+													"selector": "value",
+													"text": "value",
+													"type": "number"
+												}
+											],
+											"format": "table",
+											"parser": "backend",
+											"root_selector": "results",
+											"source": "url",
+											"type": "json",
+											"url": "https://oura.keith20.dev/api/sql",
+											"url_options": {
+												"body_content_type": "application/json",
+												"body_type": "raw",
+												"data": "{\"sql\": \"SELECT COALESCE(ROUND((julianday('now') - julianday(MAX(timestamp))) * 24, 1), 9999) AS value FROM heart_rate_samples\", \"params\": []}",
+												"method": "POST"
+											}
+										},
+										"version": "v0"
+									},
+									"refId": "A"
+								}
+							}
+						],
+						"queryOptions": {},
+						"transformations": []
+					}
+				},
+				"description": "Elapsed hours since the newest heart rate sample. Lower is better for near-real-time ingestion.",
+				"id": 2102,
+				"links": [],
+				"title": "Heart Rate Lag (hours)",
+				"vizConfig": {
+					"group": "stat",
+					"kind": "VizConfig",
+					"spec": {
+						"fieldConfig": {
+							"defaults": {
+								"thresholds": {
+									"mode": "absolute",
+									"steps": [
+										{
+											"color": "green",
+											"value": 0
+										},
+										{
+											"color": "red",
+											"value": 80
+										}
+									]
+								},
+								"unit": "h",
+								"decimals": 1
+							},
+							"overrides": []
+						},
+						"options": {
+							"colorMode": "value",
+							"graphMode": "area",
+							"justifyMode": "auto",
+							"orientation": "auto",
+							"percentChangeColorMode": "standard",
+							"reduceOptions": {
+								"calcs": [
+									"lastNotNull"
+								],
+								"fields": "",
+								"values": false
+							},
+							"showPercentChange": false,
+							"textMode": "auto",
+							"wideLayout": true
+						}
+					},
+					"version": "12.4.0-21024277089.patch2"
+				}
+			}
+		},
+		"panel-2103": {
+			"kind": "Panel",
+			"spec": {
+				"data": {
+					"kind": "QueryGroup",
+					"spec": {
+						"queries": [
+							{
+								"kind": "PanelQuery",
+								"spec": {
+									"hidden": false,
+									"query": {
+										"datasource": {
+											"name": "ff8a5nfbpai9sc"
+										},
+										"group": "yesoreyeram-infinity-datasource",
+										"kind": "DataQuery",
+										"spec": {
+											"columns": [
+												{
+													"selector": "value",
+													"text": "value",
+													"type": "number"
+												}
+											],
+											"format": "table",
+											"parser": "backend",
+											"root_selector": "results",
+											"source": "url",
+											"type": "json",
+											"url": "https://oura.keith20.dev/api/sql",
+											"url_options": {
+												"body_content_type": "application/json",
+												"body_type": "raw",
+												"data": "{\"sql\": \"SELECT COALESCE(CAST(julianday('now') - julianday(MAX(start_day)) AS INTEGER), 9999) AS value FROM enhanced_tags\", \"params\": []}",
+												"method": "POST"
+											}
+										},
+										"version": "v0"
+									},
+									"refId": "A"
+								}
+							}
+						],
+						"queryOptions": {},
+						"transformations": []
+					}
+				},
+				"description": "How many days behind the latest enhanced tag record is from today.",
+				"id": 2103,
+				"links": [],
+				"title": "Tag Data Lag (days)",
+				"vizConfig": {
+					"group": "stat",
+					"kind": "VizConfig",
+					"spec": {
+						"fieldConfig": {
+							"defaults": {
+								"thresholds": {
+									"mode": "absolute",
+									"steps": [
+										{
+											"color": "green",
+											"value": 0
+										},
+										{
+											"color": "red",
+											"value": 80
+										}
+									]
+								},
+								"unit": "d",
+								"decimals": 0
+							},
+							"overrides": []
+						},
+						"options": {
+							"colorMode": "value",
+							"graphMode": "area",
+							"justifyMode": "auto",
+							"orientation": "auto",
+							"percentChangeColorMode": "standard",
+							"reduceOptions": {
+								"calcs": [
+									"lastNotNull"
+								],
+								"fields": "",
+								"values": false
+							},
+							"showPercentChange": false,
+							"textMode": "auto",
+							"wideLayout": true
+						}
+					},
+					"version": "12.4.0-21024277089.patch2"
+				}
+			}
+		},
+		"panel-2104": {
+			"kind": "Panel",
+			"spec": {
+				"data": {
+					"kind": "QueryGroup",
+					"spec": {
+						"queries": [
+							{
+								"kind": "PanelQuery",
+								"spec": {
+									"hidden": false,
+									"query": {
+										"datasource": {
+											"name": "ff8a5nfbpai9sc"
+										},
+										"group": "yesoreyeram-infinity-datasource",
+										"kind": "DataQuery",
+										"spec": {
+											"columns": [
+												{
+													"selector": "table_name",
+													"text": "table",
+													"type": "string"
+												},
+												{
+													"selector": "rows_24h",
+													"text": "rows_24h",
+													"type": "number"
+												}
+											],
+											"format": "table",
+											"parser": "backend",
+											"root_selector": "results",
+											"source": "url",
+											"type": "json",
+											"url": "https://oura.keith20.dev/api/sql",
+											"url_options": {
+												"body_content_type": "application/json",
+												"body_type": "raw",
+												"data": "{\"sql\": \"SELECT 'daily_summaries' AS table_name, COUNT(*) AS rows_24h FROM daily_summaries WHERE day >= date('now', '-1 day') UNION ALL SELECT 'sleep_episodes' AS table_name, COUNT(*) AS rows_24h FROM sleep_episodes WHERE day >= date('now', '-1 day') UNION ALL SELECT 'activity_logs' AS table_name, COUNT(*) AS rows_24h FROM activity_logs WHERE start_datetime >= datetime('now', '-1 day') UNION ALL SELECT 'heart_rate_samples' AS table_name, COUNT(*) AS rows_24h FROM heart_rate_samples WHERE timestamp >= datetime('now', '-1 day') UNION ALL SELECT 'enhanced_tags' AS table_name, COUNT(*) AS rows_24h FROM enhanced_tags WHERE start_day >= date('now', '-1 day')\", \"params\": []}",
+												"method": "POST"
+											}
+										},
+										"version": "v0"
+									},
+									"refId": "A"
+								}
+							}
+						],
+						"queryOptions": {},
+						"transformations": []
+					}
+				},
+				"description": "Recent record counts by table over the last 24 hours to quickly spot ingestion gaps.",
+				"id": 2104,
+				"links": [],
+				"title": "Rows Ingested (24h)",
+				"vizConfig": {
+					"group": "table",
+					"kind": "VizConfig",
+					"spec": {
+						"fieldConfig": {
+							"defaults": {
+								"custom": {
+									"align": "auto",
+									"cellOptions": {
+										"type": "auto"
+									},
+									"footer": {
+										"reducers": []
+									},
+									"inspect": false
+								},
+								"thresholds": {
+									"mode": "absolute",
+									"steps": [
+										{
+											"color": "green",
+											"value": 0
+										},
+										{
+											"color": "red",
+											"value": 80
+										}
+									]
+								}
+							},
+							"overrides": []
+						},
+						"options": {
+							"cellHeight": "sm",
+							"enablePagination": false,
+							"showHeader": true
+						}
+					},
+					"version": "12.4.0-21024277089.patch2"
+				}
+			}
 		}
 	},
 	"layout": {
@@ -8965,6 +9358,72 @@
 							}
 						},
 						"title": "Data Coverage"
+					}
+				},
+				{
+					"kind": "RowsLayoutRow",
+					"spec": {
+						"collapse": true,
+						"layout": {
+							"kind": "GridLayout",
+							"spec": {
+								"items": [
+									{
+										"kind": "GridLayoutItem",
+										"spec": {
+											"element": {
+												"kind": "ElementReference",
+												"name": "panel-2101"
+											},
+											"height": 5,
+											"width": 8,
+											"x": 0,
+											"y": 0
+										}
+									},
+									{
+										"kind": "GridLayoutItem",
+										"spec": {
+											"element": {
+												"kind": "ElementReference",
+												"name": "panel-2102"
+											},
+											"height": 5,
+											"width": 8,
+											"x": 8,
+											"y": 0
+										}
+									},
+									{
+										"kind": "GridLayoutItem",
+										"spec": {
+											"element": {
+												"kind": "ElementReference",
+												"name": "panel-2103"
+											},
+											"height": 5,
+											"width": 8,
+											"x": 16,
+											"y": 0
+										}
+									},
+									{
+										"kind": "GridLayoutItem",
+										"spec": {
+											"element": {
+												"kind": "ElementReference",
+												"name": "panel-2104"
+											},
+											"height": 8,
+											"width": 24,
+											"x": 0,
+											"y": 5
+										}
+									}
+								]
+							}
+						},
+						"title": "Ops / Ingestion Health"
 					}
 				}
 			]

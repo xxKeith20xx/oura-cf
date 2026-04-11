@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.1] - 2026-04-11
+
+### Fixed
+
+- **Grafana Ops / Ingestion Health panel**: updated the `Rows Ingested (24h)` query to avoid failing when optional tables are unavailable in a deployment shape, resolving 500 errors from the Infinity datasource panel.
+
 ## [2.0.0] - 2026-04-11
 
 ### Added
