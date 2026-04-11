@@ -59,17 +59,17 @@ Diagram source: `docs/architecture.mmd`
 
 ```mermaid
 flowchart LR
-  Oura[Oura Cloud API\nOAuth + Webhooks]
-  Worker[Cloudflare Worker\noura-cf]
-  Webhook[/webhook/oura\npublic]
-  Admin[/api/admin/oura/webhooks*\nAccess + admin token]
-  Queue[Cloudflare Queue\noura-webhook-events]
+  Oura[Oura Cloud API<br/>OAuth + Webhooks]
+  Worker[Cloudflare Worker<br/>oura-cf]
+  Webhook[/webhook/oura<br/>public]
+  Admin[/api/admin/oura/webhooks*<br/>Access + admin token]
+  Queue[Cloudflare Queue<br/>oura-webhook-events]
   D1[(D1: oura_db)]
   KV[(KV: OURA_CACHE)]
   AE[(Analytics Engine)]
   WF[Backfill Workflow]
-  Cron[Cron\n0 */2 * * *]
-  Grafana[Grafana\nInfinity datasource]
+  Cron[Cron<br/>0 */2 * * *]
+  Grafana[Grafana<br/>Infinity datasource]
 
   Oura -->|webhook delivery| Webhook
   Oura -->|OAuth token exchange| Worker
@@ -81,7 +81,7 @@ flowchart LR
   Cron --> Worker
   WF --> Worker
   Admin --> Worker
-  Grafana -->|POST /api/sql\nGET /api/stats| Worker
+  Grafana -->|POST /api/sql<br/>GET /api/stats| Worker
 ```
 
 ### Technology Stack
@@ -655,6 +655,12 @@ oura-cf/
 ├── CHANGELOG.md              # Version history
 ├── docs/
 │   └── architecture.mmd      # Mermaid architecture source
+│   ├── RUNBOOK.md            # Ops runbook (OAuth/webhook/queue incidents)
+│   ├── ENVIRONMENT.md        # Secrets, bindings, and Access path policy
+│   ├── RELEASE_CHECKLIST.md  # Release process and post-deploy checks
+│   ├── DECISIONS.md          # ADR-lite architecture decisions
+│   └── KNOWN_ISSUES.md       # Active caveats and tradeoffs
+├── AGENTS.md                 # AI contributor quick context
 ├── CONTRIBUTING.md           # Contribution guidelines
 └── README.md                 # This file
 ```
@@ -701,6 +707,8 @@ Quick summary:
 
 ## AI Development Resources
 
+- Repo context for AI contributors: `AGENTS.md`
+- Operational docs for AI sessions: `docs/RUNBOOK.md`, `docs/ENVIRONMENT.md`, `docs/DECISIONS.md`, `docs/KNOWN_ISSUES.md`
 - Cloudflare Workers docs (LLM format): `https://developers.cloudflare.com/workers/llms-full.txt`
 - Cloudflare D1 docs (LLM format): `https://developers.cloudflare.com/d1/llms-full.txt`
 - Cloudflare MCP server docs: `https://developers.cloudflare.com/agents/model-context-protocol/mcp-servers-for-cloudflare/`

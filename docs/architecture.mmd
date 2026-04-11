@@ -1,15 +1,15 @@
 flowchart LR
-  Oura[Oura Cloud API\nOAuth + Webhooks]
-  Worker[Cloudflare Worker\noura-cf]
-  Webhook[/webhook/oura\npublic]
-  Admin[/api/admin/oura/webhooks*\nAccess + admin token]
-  Queue[Cloudflare Queue\noura-webhook-events]
+  Oura[Oura Cloud API<br/>OAuth + Webhooks]
+  Worker[Cloudflare Worker<br/>oura-cf]
+  Webhook[/webhook/oura<br/>public]
+  Admin[/api/admin/oura/webhooks*<br/>Access + admin token]
+  Queue[Cloudflare Queue<br/>oura-webhook-events]
   D1[(D1: oura_db)]
   KV[(KV: OURA_CACHE)]
   AE[(Analytics Engine)]
   WF[Backfill Workflow]
-  Cron[Cron\n0 */2 * * *]
-  Grafana[Grafana\nInfinity datasource]
+  Cron[Cron<br/>0 */2 * * *]
+  Grafana[Grafana<br/>Infinity datasource]
 
   Oura -->|webhook delivery| Webhook
   Oura -->|OAuth token exchange| Worker
@@ -21,4 +21,4 @@ flowchart LR
   Cron --> Worker
   WF --> Worker
   Admin --> Worker
-  Grafana -->|POST /api/sql\nGET /api/stats| Worker
+  Grafana -->|POST /api/sql<br/>GET /api/stats| Worker

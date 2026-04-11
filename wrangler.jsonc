@@ -6,7 +6,7 @@
 	"compatibility_date": "2026-02-24",
 	"compatibility_flags": ["nodejs_compat"],
 	"define": {
-		"__APP_VERSION__": "\"2.0.1\"",
+		"__APP_VERSION__": "\"2.0.2\"",
 	},
 	"workers_dev": false,
 	"triggers": {

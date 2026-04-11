@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.2] - 2026-04-11
+
+### Added
+
+- **AI/ops context docs**: added `AGENTS.md` plus `docs/RUNBOOK.md`, `docs/ENVIRONMENT.md`, `docs/DECISIONS.md`, `docs/RELEASE_CHECKLIST.md`, and `docs/KNOWN_ISSUES.md` to improve onboarding and session continuity.
+- **Smoke test utility**: added `scripts/smoke-test.sh` for quick post-deploy endpoint checks.
+
+### Fixed
+
+- **Mermaid rendering in README**: replaced escaped newline labels with `<br/>` so GitHub renders the architecture diagram correctly.
+
 ## [2.0.1] - 2026-04-11
 
 ### Fixed
