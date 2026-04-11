@@ -74,17 +74,29 @@ jobs:
           TAG="${{ steps.version.outputs.tag }}"
           PRERELEASE="${{ steps.version.outputs.prerelease }}"
 
-          # Create release with changelog content
-          if [ "$PRERELEASE" = "true" ]; then
-            gh release create "$TAG" \
+          # Upsert release so reruns/manual releases don't fail on existing tags
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" \
               --title "$TITLE" \
-              --notes-file /tmp/changelog.txt \
-              --prerelease
-          else
-            gh release create "$TAG" \
-              --title "$TITLE" \
-              --notes-file /tmp/changelog.txt \
-              --latest
-          fi
+              --notes-file /tmp/changelog.txt
 
-          echo "✅ Successfully created GitHub Release: $TITLE"
+            if [ "$PRERELEASE" = "true" ]; then
+              gh release edit "$TAG" --prerelease
+            fi
+
+            echo "✅ Updated existing GitHub Release: $TITLE"
+          else
+            if [ "$PRERELEASE" = "true" ]; then
+              gh release create "$TAG" \
+                --title "$TITLE" \
+                --notes-file /tmp/changelog.txt \
+                --prerelease
+            else
+              gh release create "$TAG" \
+                --title "$TITLE" \
+                --notes-file /tmp/changelog.txt \
+                --latest
+            fi
+
+            echo "✅ Successfully created GitHub Release: $TITLE"
+          fi
