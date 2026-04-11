@@ -1,14 +1,13 @@
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "oura-cf",
-	"preview_urls": false,
 	"main": "src/index.ts",
 	"compatibility_date": "2026-02-24",
 	"compatibility_flags": ["nodejs_compat"],
 	"define": {
 		"__APP_VERSION__": "\"2.0.0\"",
 	},
-	"workers_dev": false,
+	"workers_dev": true,
 	"triggers": {
 		"crons": ["0 */2 * * *"],
 	},
@@ -22,15 +21,16 @@
 	"kv_namespaces": [
 		{
 			"binding": "OURA_CACHE",
-			"id": "16e97e2cc4bf430baad10361bbf0ba27",
+			"id": "<YOUR_KV_NAMESPACE_ID>",
 		},
 	],
-	"analytics_engine_datasets": [
-		{
-			"binding": "OURA_ANALYTICS",
-			"dataset": "oura_metrics",
-		},
-	],
+	// Optional: add Analytics Engine binding after initial deploy
+	// "analytics_engine_datasets": [
+	// 	{
+	// 		"binding": "OURA_ANALYTICS",
+	// 		"dataset": "oura_metrics"
+	// 	}
+	// ],
 	"workflows": [
 		{
 			"name": "backfill-workflow",
@@ -59,7 +59,7 @@
 		{
 			"binding": "oura_db",
 			"database_name": "oura-db",
-			"database_id": "782c3449-0a87-4ba8-a93a-bbb151749743",
+			"database_id": "<YOUR_D1_DATABASE_ID>",
 			"migrations_dir": "migrations",
 		},
 	],
@@ -87,12 +87,6 @@
 				"limit": 10,
 				"period": 60,
 			},
-		},
-	],
-	"routes": [
-		{
-			"pattern": "oura.keith20.dev",
-			"custom_domain": true,
 		},
 	],
 }

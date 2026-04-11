@@ -1,5 +1,5 @@
-import { env, createExecutionContext, waitOnExecutionContext, SELF } from 'cloudflare:test';
-import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
+import { env, createExecutionContext, createMessageBatch, getQueueResult, SELF } from 'cloudflare:test';
+import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 import worker from '../src/index';
 
 const AUTH_HEADER = { Authorization: 'Bearer test-grafana-secret' };
@@ -13,13 +13,32 @@ async function sqlQuery(sql: string, params: unknown[] = []) {
 	});
 }
 
+async function signWebhookBody(secret: string, timestamp: string, rawBody: string): Promise<string> {
+	const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+	const signature = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`${timestamp}${rawBody}`));
+	return Array.from(new Uint8Array(signature))
+		.map((b) => b.toString(16).padStart(2, '0'))
+		.join('');
+}
+
 // Set up D1 tables before all tests
 beforeAll(async () => {
 	const db = (env as any).oura_db as D1Database;
 	await db.batch([
 		db.prepare(`CREATE TABLE IF NOT EXISTS daily_summaries (
-			day DATE PRIMARY KEY, readiness_score INTEGER, sleep_score INTEGER,
-			activity_score INTEGER, activity_steps INTEGER, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			day DATE PRIMARY KEY,
+			readiness_score INTEGER,
+			sleep_score INTEGER,
+			sleep_deep_sleep INTEGER,
+			sleep_efficiency INTEGER,
+			sleep_latency INTEGER,
+			sleep_rem_sleep INTEGER,
+			sleep_restfulness INTEGER,
+			sleep_timing INTEGER,
+			sleep_total_sleep INTEGER,
+			activity_score INTEGER,
+			activity_steps INTEGER,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`),
 		db.prepare(`CREATE TABLE IF NOT EXISTS heart_rate_samples (timestamp DATETIME PRIMARY KEY, bpm INTEGER, source TEXT)`),
 		db.prepare(`CREATE TABLE IF NOT EXISTS sleep_episodes (id TEXT PRIMARY KEY, day DATE, type TEXT)`),
@@ -52,7 +71,7 @@ describe('Health Endpoint', () => {
 		const data = (await response.json()) as any;
 		expect(data).toMatchObject({
 			status: 'ok',
-			version: '1.4.3',
+			version: '2.0.0',
 		});
 		expect(data.timestamp).toBeDefined();
 		// request debug info is admin-only — not present without auth
@@ -132,6 +151,13 @@ describe('Authentication', () => {
 
 		// Should not be 401 (may be 200 or fallback to on-demand stats)
 		expect(response.status).not.toBe(401);
+	});
+
+	it('blocks admin webhook management routes for non-admin token', async () => {
+		const response = await SELF.fetch('https://example.com/api/admin/oura/webhooks', {
+			headers: AUTH_HEADER,
+		});
+		expect(response.status).toBe(403);
 	});
 });
 
@@ -433,6 +459,121 @@ describe('CORS Origin Validation', () => {
 		const corsOrigin = response.headers.get('Access-Control-Allow-Origin');
 		expect(corsOrigin).not.toBe('https://evil.com');
 		expect(corsOrigin).toBe('https://oura.keith20.dev');
+	});
+});
+
+describe('Webhook Callback', () => {
+	it('verifies challenge token on GET /webhook/oura', async () => {
+		const response = await SELF.fetch(
+			'https://example.com/webhook/oura?verification_token=test-webhook-verification-token&challenge=challenge-value',
+		);
+		expect(response.status).toBe(200);
+		const body = (await response.json()) as any;
+		expect(body.challenge).toBe('challenge-value');
+	});
+
+	it('rejects invalid challenge token on GET /webhook/oura', async () => {
+		const response = await SELF.fetch('https://example.com/webhook/oura?verification_token=wrong&challenge=abc');
+		expect(response.status).toBe(401);
+	});
+
+	it('rejects invalid signature on POST /webhook/oura', async () => {
+		const payload = {
+			event_type: 'update',
+			data_type: 'daily_sleep',
+			object_id: `obj-${Date.now()}`,
+			event_time: new Date().toISOString(),
+			user_id: 'user-test',
+		};
+		const response = await SELF.fetch('https://example.com/webhook/oura', {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				'x-oura-timestamp': Math.floor(Date.now() / 1000).toString(),
+				'x-oura-signature': 'bad-signature',
+			},
+			body: JSON.stringify(payload),
+		});
+
+		expect(response.status).toBe(401);
+	});
+
+	it('accepts valid signed webhook payload', async () => {
+		const payload = {
+			event_type: 'update',
+			data_type: 'daily_sleep',
+			object_id: `obj-${Date.now()}-${Math.random()}`,
+			event_time: new Date().toISOString(),
+			user_id: 'user-test',
+		};
+		const rawBody = JSON.stringify(payload);
+		const timestamp = Math.floor(Date.now() / 1000).toString();
+		const signature = await signWebhookBody('test-oura-client-secret', timestamp, rawBody);
+
+		const response = await SELF.fetch('https://example.com/webhook/oura', {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				'x-oura-timestamp': timestamp,
+				'x-oura-signature': signature,
+			},
+			body: rawBody,
+		});
+
+		expect(response.status).toBe(202);
+		const body = (await response.json()) as any;
+		expect(body.accepted).toBe(1);
+	});
+});
+
+describe('Webhook Queue Processing', () => {
+	it('acks valid message and saves single-document payload', async () => {
+		const db = (env as any).oura_db as D1Database;
+		await db
+			.prepare('INSERT OR REPLACE INTO oura_oauth_tokens (user_id, access_token, refresh_token, expires_at) VALUES (?, ?, ?, ?)')
+			.bind('default', 'access-token', 'refresh-token', Date.now() + 3600000)
+			.run();
+
+		const originalFetch = globalThis.fetch;
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+				const url = typeof input === 'string' ? input : input.toString();
+				if (url.includes('/v2/usercollection/daily_sleep/queue-object-1')) {
+					return new Response(JSON.stringify({ day: '2026-03-02', score: 88, contributors: {} }), {
+						status: 200,
+						headers: { 'Content-Type': 'application/json' },
+					});
+				}
+				return originalFetch(input, init);
+			}),
+		);
+
+		const batch = createMessageBatch('oura-webhook-events', [
+			{
+				id: 'msg-1',
+				timestamp: new Date(),
+				attempts: 1,
+				body: {
+					eventType: 'update',
+					dataType: 'daily_sleep',
+					objectId: 'queue-object-1',
+					eventTime: new Date().toISOString(),
+					userId: 'user-test',
+				},
+			},
+		]);
+
+		const ctx = createExecutionContext();
+		await worker.queue(batch, env, ctx);
+		const result = await getQueueResult(batch, ctx);
+		expect(result.explicitAcks).toContain('msg-1');
+		expect(result.retryMessages).toStrictEqual([]);
+
+		const check = await db.prepare('SELECT day, sleep_score FROM daily_summaries WHERE day = ?').bind('2026-03-02').first<any>();
+		expect(check?.sleep_score).toBe(88);
+
+		vi.unstubAllGlobals();
 	});
 });
 

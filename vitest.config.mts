@@ -9,12 +9,16 @@ export default defineConfig({
 				bindings: {
 					GRAFANA_SECRET: 'test-grafana-secret',
 					ADMIN_SECRET: 'test-admin-secret',
+					OURA_CLIENT_ID: 'test-oura-client-id',
+					OURA_CLIENT_SECRET: 'test-oura-client-secret',
+					OURA_WEBHOOK_VERIFICATION_TOKEN: 'test-webhook-verification-token',
+					OURA_WEBHOOK_CALLBACK_URL: 'https://example.com/webhook/oura',
 				},
 			},
 		}),
 	],
 	define: {
-		__APP_VERSION__: JSON.stringify('1.4.4'),
+		__APP_VERSION__: JSON.stringify('2.0.0'),
 	},
 	test: {},
 });

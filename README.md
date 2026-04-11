@@ -9,17 +9,23 @@ A Cloudflare Worker that syncs Oura Ring health data to a D1 database and serves
 ## Features
 
 - **Complete Data Coverage**: Syncs all Oura Ring v2 API endpoints (18+ resources)
-- **Automated Sync**: Hourly cron-based data updates
+- **Automated Sync**: Every 2 hours via cron, plus webhook-driven near-real-time updates
 - **Durable Backfill**: Cloudflare Workflows for reliable, retryable historical data sync
-- **Grafana Integration**: Pre-built dashboard with 61 visualizations
+- **Grafana Integration**: Pre-built dashboard JSON included in repo
 - **Enterprise Security**: Multi-token auth, timing-safe comparison, 3-tier rate limiting, SQL injection prevention, query timeouts
 - **SQL Query Caching**: KV-backed cache with SHA-256 keys, automatic invalidation after sync
 - **Analytics Engine**: Query and auth metrics via Cloudflare Analytics Engine
 - **Status Page**: `/status` page showing pipeline health, last sync time, and per-table record counts (requires auth)
 - **Sync Health Tracking**: Last successful sync metadata written to KV after every cron run
 - **Cost-Efficient**: Runs within Cloudflare's free tier limits
-- **Test Coverage**: 50 tests (48 passing) covering auth, SQL injection, param validation, CORS, and more
+- **Test Coverage**: Automated tests covering auth, SQL safety, webhook verification, and queue ingestion
 - **Production-Ready**: Comprehensive logging, error handling, observability, and monitoring
+
+## Release Notes (v2.0.0)
+
+- OAuth is now required; PAT fallback was removed.
+- Webhook-first ingestion is now the primary freshness path, with cron/backfill as fallback.
+- Queue bindings + webhook secrets are required for full production operation.
 
 ## Table of Contents
 
@@ -30,7 +36,7 @@ A Cloudflare Worker that syncs Oura Ring health data to a D1 database and serves
 - [Backfill Workflows](#backfill-workflows)
 - [Deployment](#deployment)
 - [Configuration](#configuration)
-- [Cloudflare Access (Optional)](#cloudflare-access-optional)
+- [Cloudflare Access (Recommended)](#cloudflare-access-recommended)
 - [Grafana Setup](#grafana-setup)
 - [Development](#development)
 - [Contributing](#contributing)
@@ -38,70 +44,44 @@ A Cloudflare Worker that syncs Oura Ring health data to a D1 database and serves
 
 ## Roadmap / Next Steps
 
-### High Priority
-
-- [ ] **Modularise `src/index.ts`** — the file is ~2,300 lines and contains everything: routing, auth, sync engine, D1 write handlers, OAuth, caching, and the Workflow class. Suggested split:
-  ```
-  src/
-    index.ts           # fetch/scheduled handlers + route wiring only
-    types.ts           # Env interface + all shared types
-    middleware/
-      auth.ts          # validateBearerToken, getBearerRole, logAuthAttempt
-      cors.ts          # getCorsOrigins, withCors, security headers
-      rate-limit.ts    # getRateLimitKey helpers
-    routes/
-      health.ts        # GET /health
-      sql.ts           # POST /api/sql
-      stats.ts         # GET /api/stats
-      daily-summaries.ts
-      backfill.ts      # GET /backfill + /backfill/status
-      oauth.ts         # GET /oauth/start + /oauth/callback
-      status.ts        # GET /status
-    services/
-      oura-api.ts      # fetchWithRetry, circuit breaker, buildOuraUrl
-      sync.ts          # syncData, ingestResource
-      d1-handlers.ts   # saveToD1 dispatch table (one function per endpoint)
-      cache.ts         # hashSqlQuery, flushSqlCache
-      token.ts         # getOuraAccessToken, refreshAccessToken, upsertOauthToken
-    lib/
-      sql-validator.ts # isReadOnlySql, analyzeQueryComplexity, stripComments
-      crypto.ts        # constantTimeCompare, hashSqlQuery
-      utils.ts         # toInt, toReal, parseResourceFilter
-    workflow.ts        # BackfillWorkflow (exported separately)
-  ```
-- [ ] **Adopt [Hono](https://hono.dev/) router** — replace the `if/else` pathname chain with typed middleware and route groups. Auth, rate-limiting, and CORS become composable middleware applied per-route group rather than duplicated inline. Works cleanly with the module split above.
-
-### Medium Priority
-
-- [ ] **Expand test coverage** — the sync engine, OAuth flow, circuit breaker, and `saveToD1` handlers have no tests. After the module split, these become straightforward unit tests (pure functions or small D1 fixture tests).
-- [ ] **D1 backup workflow** — weekly GitHub Actions job running `wrangler d1 export oura-db --remote` and uploading as an artifact (90-day retention).
-- [ ] **Data export endpoint** — `GET /api/export?table=daily_summaries&start=...&end=...&format=csv` for ad-hoc data pulls without Grafana.
-
-### Low Priority
-
-- [ ] **Migrate secrets to Cloudflare Secrets Store** — replaces individual `wrangler secret put` calls with a versioned, dashboard-managed store.
-- [ ] **Grafana dashboard provisioning** — replace the static JSON import with Grafana Terraform or API-based provisioning so dashboard changes are tracked in source control.
+- [ ] Split `src/index.ts` into route/services/modules to reduce risk and improve maintainability.
+- [ ] Introduce a router framework (Hono) for cleaner middleware composition and route ownership.
+- [ ] Expand automated coverage for sync engine, OAuth refresh lifecycle, queue consumer, and D1 writers.
+- [ ] Add scheduled D1 backups (export + artifact retention) via GitHub Actions.
+- [ ] Add optional data export endpoint (`/api/export`) for CSV pulls outside Grafana.
+- [ ] Consider Cloudflare Secrets Store and dashboard provisioning automation as follow-up ops hardening.
 
 ---
 
 ## Architecture
 
-![Architecture diagram](docs/architecture.svg)
+Diagram source: `docs/architecture.mmd`
 
-```
-Oura Ring ──► Oura Cloud API ──► Cloudflare Worker (oura-cf)
-                  OAuth2              │
-                                      ├── Sync Engine ────► D1 Database (7 tables)
-                                      ├── REST API    ────► KV Cache (SQL + spec + sync)
-                                      ├── Backfill         Analytics Engine
-                                      │   Workflow
-                                      └── Auth & Security  Rate Limiter (3-tier)
-                                              │
-                                              ▼
-                                       Grafana Cloud
-                                       (Infinity DS · 61 panels)
+```mermaid
+flowchart LR
+  Oura[Oura Cloud API\nOAuth + Webhooks]
+  Worker[Cloudflare Worker\noura-cf]
+  Webhook[/webhook/oura\npublic]
+  Admin[/api/admin/oura/webhooks*\nAccess + admin token]
+  Queue[Cloudflare Queue\noura-webhook-events]
+  D1[(D1: oura_db)]
+  KV[(KV: OURA_CACHE)]
+  AE[(Analytics Engine)]
+  WF[Backfill Workflow]
+  Cron[Cron\n0 */2 * * *]
+  Grafana[Grafana\nInfinity datasource]
 
-Cron triggers (01:00, 12:00, 18:00 UTC) ──► Sync Engine
+  Oura -->|webhook delivery| Webhook
+  Oura -->|OAuth token exchange| Worker
+  Webhook -->|verify + enqueue| Queue
+  Queue -->|single-document ingest| Worker
+  Worker --> D1
+  Worker --> KV
+  Worker --> AE
+  Cron --> Worker
+  WF --> Worker
+  Admin --> Worker
+  Grafana -->|POST /api/sql\nGET /api/stats| Worker
 ```
 
 ### Technology Stack
@@ -111,13 +91,14 @@ Cron triggers (01:00, 12:00, 18:00 UTC) ──► Sync Engine
 | **Runtime**        | Cloudflare Workers     | Edge computing platform          |
 | **Database**       | Cloudflare D1 (SQLite) | Structured data storage          |
 | **Cache**          | Cloudflare KV          | SQL query + OpenAPI spec caching |
+| **Queueing**       | Cloudflare Queues      | Webhook event buffering          |
 | **Workflows**      | Cloudflare Workflows   | Durable backfill orchestration   |
 | **Analytics**      | Analytics Engine       | Query and auth metrics           |
 | **Authentication** | Oura OAuth2            | Secure API access                |
 | **Visualization**  | Grafana Cloud          | Dashboards and analytics         |
 | **Language**       | TypeScript 5.9         | Type-safe development            |
-| **Testing**        | Vitest + Workers Pool  | 50 tests with Miniflare bindings |
-| **Deployment**     | Wrangler 4.75+         | CLI deployment tool              |
+| **Testing**        | Vitest + Workers Pool  | 56 tests with Miniflare bindings |
+| **Deployment**     | Wrangler 4.81+         | CLI deployment tool              |
 
 ## Quick Start
 
@@ -130,6 +111,11 @@ Cron triggers (01:00, 12:00, 18:00 UTC) ──► Sync Engine
 
 ### Installation
 
+Two deployment modes are supported:
+
+- **Maintainer mode (fastest for this repo owner)**: use `wrangler.jsonc` as-is for production.
+- **Starter mode (new deployers/forks)**: use `wrangler.starter.jsonc` and replace placeholder IDs.
+
 ```bash
 # Clone repository
 git clone https://github.com/xxKeith20xx/oura-cf.git
@@ -138,16 +124,26 @@ cd oura-cf
 # Install dependencies
 npm install
 
+# If deploying your own copy, use starter config
+cp wrangler.starter.jsonc wrangler.local.jsonc
+
 # Configure Cloudflare secrets
 npx wrangler secret put GRAFANA_SECRET      # Token for Grafana datasource auth
 npx wrangler secret put ADMIN_SECRET        # Token for manual admin operations
 npx wrangler secret put OURA_CLIENT_ID      # From Oura developer portal
 npx wrangler secret put OURA_CLIENT_SECRET  # From Oura developer portal
+npx wrangler secret put OURA_WEBHOOK_CALLBACK_URL
+npx wrangler secret put OURA_WEBHOOK_VERIFICATION_TOKEN
 
 # Create D1 database
 npx wrangler d1 create oura-db
 
-# Update wrangler.jsonc with your database_id (from previous command)
+# Create KV + queues
+npx wrangler kv namespace create OURA_CACHE
+npx wrangler queues create oura-webhook-events
+npx wrangler queues create oura-webhook-events-dlq
+
+# Update wrangler.local.jsonc with your database_id + kv namespace id
 
 # Apply database migrations
 npx wrangler d1 migrations apply oura-db --remote
@@ -156,22 +152,27 @@ npx wrangler d1 migrations apply oura-db --remote
 export CLOUDFLARE_ACCOUNT_ID=your-account-id
 
 # Deploy to Cloudflare
-npx wrangler deploy
+npx wrangler deploy --config wrangler.local.jsonc
 ```
 
 ### Initial Data Sync
 
 ```bash
-# Authorize Oura OAuth (visit URL in browser)
-curl https://your-worker.workers.dev/oauth/start \
+# Authorize Oura OAuth (visit URL in browser).
+# If Access protects /oauth/start, also include CF-Access service token headers.
+curl https://your-host/oauth/start \
   -H "Authorization: Bearer YOUR_ADMIN_SECRET"
 
 # Complete OAuth flow, then backfill historical data
-curl https://your-worker.workers.dev/backfill?days=730 \
+curl https://your-host/backfill?days=730 \
+  -H "Authorization: Bearer YOUR_ADMIN_SECRET"
+
+# Ensure webhook subscriptions are configured
+curl -X POST https://your-host/api/admin/oura/webhooks/sync \
   -H "Authorization: Bearer YOUR_ADMIN_SECRET"
 
 # Poll backfill status
-curl "https://your-worker.workers.dev/backfill/status?id=INSTANCE_ID" \
+curl "https://your-host/backfill/status?id=INSTANCE_ID" \
   -H "Authorization: Bearer YOUR_ADMIN_SECRET"
 ```
 
@@ -247,49 +248,54 @@ Oura Docs Page → Discover Spec URL → Fetch OpenAPI Spec → KV Cache (24hr)
 | `/health`         | GET    | Health check (last sync info with auth; debug with admin) | 1 req/60s per IP  |
 | `/favicon.ico`    | GET    | Ring emoji favicon                                        | Cached 1 year     |
 | `/oauth/callback` | GET    | OAuth2 callback handler                                   | 10 req/60s per IP |
+| `/webhook/oura`   | GET    | Oura webhook challenge verification                       | N/A               |
+| `/webhook/oura`   | POST   | Oura signed webhook delivery endpoint                     | N/A               |
 
 ### Authenticated Endpoints (Require Bearer Token)
 
 Rate limit: 3000 requests per minute per IP (applies to all authenticated endpoints)
 
-| Endpoint               | Method | Description                                            | Cache TTL |
-| ---------------------- | ------ | ------------------------------------------------------ | --------- |
-| `/status`              | GET    | Pipeline status page (HTML) — record counts, last sync | 5 minutes |
-| `/oauth/start`         | GET    | Initiate Oura OAuth flow                               | N/A       |
-| `/backfill`            | GET    | Start backfill workflow (1 req/60s)                    | N/A       |
-| `/backfill/status`     | GET    | Poll backfill workflow status                          | N/A       |
-| `/api/daily_summaries` | GET    | Query daily summaries table                            | 5 minutes |
-| `/api/stats`           | GET    | Pre-computed table statistics                          | 1 hour    |
-| `/api/sql`             | POST   | Execute read-only SQL queries                          | 6 hours   |
-| `/`                    | GET    | All daily summaries (sorted by day)                    | 5 minutes |
+| Endpoint                         | Method | Description                                                | Cache TTL |
+| -------------------------------- | ------ | ---------------------------------------------------------- | --------- |
+| `/status`                        | GET    | Pipeline status page (HTML) — record counts, last sync     | 5 minutes |
+| `/oauth/start`                   | GET    | Initiate Oura OAuth flow                                   | N/A       |
+| `/backfill`                      | GET    | Start backfill workflow (1 req/60s)                        | N/A       |
+| `/backfill/status`               | GET    | Poll backfill workflow status                              | N/A       |
+| `/api/daily_summaries`           | GET    | Query daily summaries table                                | 5 minutes |
+| `/api/stats`                     | GET    | Pre-computed table statistics                              | 1 hour    |
+| `/api/sql`                       | POST   | Execute read-only SQL queries                              | 6 hours   |
+| `/api/admin/oura/webhooks`       | GET    | List Oura webhook subscriptions (admin only)               | N/A       |
+| `/api/admin/oura/webhooks/sync`  | POST   | Ensure configured webhook subscriptions exist (admin only) | N/A       |
+| `/api/admin/oura/webhooks/renew` | POST   | Renew expiring webhook subscriptions (admin only)          | N/A       |
+| `/`                              | GET    | All daily summaries (sorted by day)                        | 5 minutes |
 
 ### Example: Backfill with Workflows
 
 ```bash
 # Start a backfill (returns immediately with workflow instance ID)
-curl "https://your-worker.workers.dev/backfill?days=730" \
+curl "https://your-host/backfill?days=730" \
   -H "Authorization: Bearer YOUR_ADMIN_SECRET"
 # → 202 { "instanceId": "backfill-730d-offset0-...", "statusUrl": "/backfill/status?id=..." }
 
 # Poll status until complete
-curl "https://your-worker.workers.dev/backfill/status?id=backfill-730d-offset0-..." \
+curl "https://your-host/backfill/status?id=backfill-730d-offset0-..." \
   -H "Authorization: Bearer YOUR_ADMIN_SECRET"
 # → { "status": "running" }  ... then eventually:
 # → { "status": "complete", "output": { "successful": 18, "failed": 0, "totalRequests": 42 } }
 
 # Backfill specific resources only
-curl "https://your-worker.workers.dev/backfill?days=365&resources=heartrate,sleep" \
+curl "https://your-host/backfill?days=365&resources=heartrate,sleep" \
   -H "Authorization: Bearer YOUR_ADMIN_SECRET"
 
 # Backfill with offset (skip recent days)
-curl "https://your-worker.workers.dev/backfill?days=365&offset_days=30" \
+curl "https://your-host/backfill?days=365&offset_days=30" \
   -H "Authorization: Bearer YOUR_ADMIN_SECRET"
 ```
 
 ### Example: SQL Query (Grafana)
 
 ```bash
-curl -X POST https://your-worker.workers.dev/api/sql \
+curl -X POST https://your-host/api/sql \
   -H "Authorization: Bearer YOUR_GRAFANA_SECRET" \
   -H "Content-Type: application/json" \
   -d '{
@@ -324,9 +330,15 @@ Large backfills use [Cloudflare Workflows](https://developers.cloudflare.com/wor
 
 ### Cron Sync (unchanged)
 
-The hourly cron sync (`syncData`) remains inline — it only syncs 3 days of data, well within Workers limits. The Workflow is only used for `/backfill`.
+The every-2-hours cron sync (`syncData`) remains inline — it only syncs 3 days of data, well within Workers limits. The Workflow is only used for `/backfill`.
 
 ## Deployment
+
+### Maintainer Fast Deploy (current production)
+
+```bash
+npm run deploy:cf
+```
 
 ### Manual Deployment
 
@@ -338,7 +350,14 @@ npx wrangler d1 migrations apply oura-db --remote
 npx wrangler deploy
 
 # Verify deployment
-curl https://your-worker.workers.dev/health
+curl https://your-host/health
+```
+
+### Starter/Fork Deployment
+
+```bash
+# Use starter config with your own IDs
+npx wrangler deploy --config wrangler.local.jsonc
 ```
 
 ### Custom Domain Setup
@@ -363,17 +382,22 @@ npx wrangler deploy
 
 ### Environment Variables (Secrets)
 
-| Secret               | Required | Description                                                          |
-| -------------------- | -------- | -------------------------------------------------------------------- |
-| `GRAFANA_SECRET`     | Yes      | Bearer token for Grafana datasource auth                             |
-| `ADMIN_SECRET`       | No       | Separate token for manual admin operations                           |
-| `OURA_CLIENT_ID`     | Yes      | OAuth2 client ID from Oura developer portal                          |
-| `OURA_CLIENT_SECRET` | Yes      | OAuth2 client secret from Oura developer portal                      |
-| `OURA_PAT`           | No       | Personal access token (alternative to OAuth)                         |
-| `ALLOWED_ORIGINS`    | No       | Comma-separated CORS origins                                         |
-| `MAX_QUERY_ROWS`     | No       | Maximum rows from SQL queries (default: 50000)                       |
-| `QUERY_TIMEOUT_MS`   | No       | Query timeout in milliseconds (default: 7000, clamped to 1000-15000) |
-| `LOG_SQL_PREVIEW`    | No       | Set `false` to disable SQL preview text in logs/analytics            |
+| Secret                              | Required | Description                                                          |
+| ----------------------------------- | -------- | -------------------------------------------------------------------- |
+| `GRAFANA_SECRET`                    | Yes      | Bearer token for Grafana datasource auth                             |
+| `ADMIN_SECRET`                      | No       | Separate token for manual admin operations                           |
+| `OURA_CLIENT_ID`                    | Yes      | OAuth2 client ID from Oura developer portal                          |
+| `OURA_CLIENT_SECRET`                | Yes      | OAuth2 client secret from Oura developer portal                      |
+| `OURA_WEBHOOK_CALLBACK_URL`         | Yes      | Public callback URL for Oura webhook subscriptions (for sync route)  |
+| `OURA_WEBHOOK_VERIFICATION_TOKEN`   | Yes      | Shared token used for Oura webhook challenge verification            |
+| `OURA_WEBHOOK_SIGNING_SECRET`       | No       | Optional webhook signature secret (defaults to `OURA_CLIENT_SECRET`) |
+| `OURA_WEBHOOK_ALLOWED_SKEW_SECONDS` | No       | Allowed timestamp skew for webhook signatures (default: 300)         |
+| `OURA_WEBHOOK_DATA_TYPES`           | No       | Comma-separated webhook data types to manage via sync endpoint       |
+| `OURA_WEBHOOK_EVENT_TYPES`          | No       | Comma-separated event types (`create,update,delete`)                 |
+| `ALLOWED_ORIGINS`                   | No       | Comma-separated CORS origins                                         |
+| `MAX_QUERY_ROWS`                    | No       | Maximum rows from SQL queries (default: 50000)                       |
+| `QUERY_TIMEOUT_MS`                  | No       | Query timeout in milliseconds (default: 7000, clamped to 1000-15000) |
+| `LOG_SQL_PREVIEW`                   | No       | Set `false` to disable SQL preview text in logs/analytics            |
 
 ### Wrangler Configuration
 
@@ -383,7 +407,19 @@ Key settings in `wrangler.jsonc`:
 {
 	"compatibility_date": "2026-02-24",
 	"triggers": {
-		"crons": ["0 * * * *"], // Sync hourly
+		"crons": ["0 */2 * * *"], // Sync every 2 hours
+	},
+	"queues": {
+		"producers": [{ "binding": "OURA_WEBHOOK_QUEUE", "queue": "oura-webhook-events" }],
+		"consumers": [
+			{
+				"queue": "oura-webhook-events",
+				"max_batch_size": 10,
+				"max_batch_timeout": 5,
+				"max_retries": 8,
+				"dead_letter_queue": "oura-webhook-events-dlq",
+			},
+		],
 	},
 	"workflows": [
 		{
@@ -415,25 +451,28 @@ Key settings in `wrangler.jsonc`:
 
 ### Cloudflare Bindings
 
-| Binding               | Type             | Purpose                              |
-| --------------------- | ---------------- | ------------------------------------ |
-| `oura_db`             | D1 Database      | Primary data storage                 |
-| `OURA_CACHE`          | KV Namespace     | SQL query + OpenAPI spec caching     |
-| `BACKFILL_WORKFLOW`   | Workflow         | Durable backfill orchestration       |
-| `OURA_ANALYTICS`      | Analytics Engine | Query and auth metrics               |
-| `RATE_LIMITER`        | Rate Limit       | Public endpoint rate limiting        |
-| `AUTH_RATE_LIMITER`   | Rate Limit       | Authenticated endpoint rate limiting |
-| `UNAUTH_RATE_LIMITER` | Rate Limit       | Unauthenticated rate limiting        |
+| Binding               | Type             | Purpose                                |
+| --------------------- | ---------------- | -------------------------------------- |
+| `oura_db`             | D1 Database      | Primary data storage                   |
+| `OURA_CACHE`          | KV Namespace     | SQL query + OpenAPI spec caching       |
+| `OURA_WEBHOOK_QUEUE`  | Queue            | Webhook event buffering + async ingest |
+| `BACKFILL_WORKFLOW`   | Workflow         | Durable backfill orchestration         |
+| `OURA_ANALYTICS`      | Analytics Engine | Query and auth metrics                 |
+| `RATE_LIMITER`        | Rate Limit       | Public endpoint rate limiting          |
+| `AUTH_RATE_LIMITER`   | Rate Limit       | Authenticated endpoint rate limiting   |
+| `UNAUTH_RATE_LIMITER` | Rate Limit       | Unauthenticated rate limiting          |
 
-## Cloudflare Access (Optional)
+## Cloudflare Access (Recommended)
 
-For enhanced security and centralized audit logs, protect API endpoints with Cloudflare Access service tokens.
+For stronger perimeter auth and centralized audit logs, protect admin/API endpoints with Cloudflare Access.
 
 ### Setup
 
 1. **Create Service Token** in Zero Trust Dashboard (Access → Service Auth → Service Tokens)
-2. **Create Access Application** protecting your API endpoints
-3. **Configure Policy** with Service Auth action
+2. **Create Access Application** protecting admin/API paths
+3. **Configure Policies**:
+   - service token policy for machine clients (Grafana/automation)
+   - optional human IdP policy (e.g. GitHub) for browser access
 4. **Add Headers to Grafana** datasource configuration:
    - `CF-Access-Client-Id: <token-id>`
    - `CF-Access-Client-Secret: <token-secret>`
@@ -444,7 +483,10 @@ For enhanced security and centralized audit logs, protect API endpoints with Clo
 - **Defense in Depth**: Multiple authentication layers
 - **Token Rotation**: Supports graceful credential updates
 
-**Note**: Public endpoints (`/health`, `/oauth/callback`, favicons) should remain unprotected to ensure OAuth flow and monitoring continue to function.
+**Path guidance**:
+
+- Keep protected: `/api/*`, `/backfill`, `/oauth/start`
+- Keep public: `/webhook/oura`, `/oauth/callback`, `/health`, `/favicon.ico`
 
 ## Grafana Setup
 
@@ -463,7 +505,7 @@ For enhanced security and centralized audit logs, protect API endpoints with Clo
 
 2. **Create Datasource**
    - Name: `Oura API`
-   - URL: `https://your-worker.workers.dev/api/sql`
+   - URL: `https://your-host/api/sql`
    - Method: `POST`
    - Custom HTTP Headers (see below)
 
@@ -471,7 +513,7 @@ For enhanced security and centralized audit logs, protect API endpoints with Clo
    ```bash
    # Use provided dashboard JSON
    cat grafana-dashboard-structured.json
-   # Import via Grafana UI ��� Dashboards → Import
+   # Import via Grafana UI -> Dashboards -> Import
    ```
 
 **Custom HTTP Headers Configuration:**
@@ -488,7 +530,7 @@ With Cloudflare Access (recommended):
 
 ### Dashboard Features
 
-- **61 Visualizations** across 12 sections
+- **Comprehensive visualizations** across readiness, sleep, activity, stress, tags, and data quality sections
 - **Time-series panels**: Readiness, sleep, activity trends
 - **Stat panels**: Current scores, latest metrics, sleep timing
 - **Bar charts**: Sleep stages, workout distribution, tag frequency
@@ -521,7 +563,7 @@ ORDER BY day
 
 - **Multi-token auth**: Separate `GRAFANA_SECRET` and `ADMIN_SECRET` for role separation
   - `GRAFANA_SECRET` — read-only access for Grafana datasource
-  - `ADMIN_SECRET` — elevated access: enables debug output on `/health`, required for `/backfill` and `/oauth/start`
+  - `ADMIN_SECRET` — elevated access: enables debug output on `/health`, required for `/backfill`, `/oauth/start`, and `/api/admin/oura/webhooks*`
 - **Timing-safe comparison**: Uses `crypto.subtle.timingSafeEqual` (SHA-256 hash both sides first) to prevent timing attacks
 - **OAuth state validation**: 24-hour expiry with automatic cleanup via cron
 - **Debug header protection**: `/health` request headers (including auth tokens) are never returned to non-admin callers
@@ -578,7 +620,7 @@ The project uses Vitest with `@cloudflare/vitest-pool-workers` for testing again
 npm test          # Watch mode
 npm run test:run  # Single run
 
-# 50 tests (48 passing, 2 skipped)
+# 56 tests (54 passing, 2 skipped)
 # Coverage: auth, SQL injection, param validation, LIMIT capping,
 #           CORS origins, daily_summaries, 404 handling, root endpoint
 ```
@@ -588,9 +630,9 @@ npm run test:run  # Single run
 ```
 oura-cf/
 ├── src/
-│   └── index.ts              # Main Worker + BackfillWorkflow (2,300+ lines)
+│   └── index.ts              # Main Worker + BackfillWorkflow (3,000+ lines)
 ├── test/
-│   └── index.spec.ts         # 50 tests
+│   └── index.spec.ts         # 56 tests
 ├── migrations/
 │   ├── 0001_init.sql         # Core tables
 │   ├── 0002_oauth_tokens.sql # OAuth token storage
@@ -605,11 +647,14 @@ oura-cf/
 ├── scripts/
 │   └── sync-version.sh       # Syncs version from package.json → wrangler.jsonc + vitest config
 ├── wrangler.jsonc            # Cloudflare configuration
+├── wrangler.starter.jsonc    # Starter config for independent deployments
 ├── vitest.config.mts         # Test configuration
 ├── package.json              # Dependencies
 ├── tsconfig.json             # TypeScript config
-├── grafana-dashboard-structured.json  # Grafana dashboard (61 panels)
+├── grafana-dashboard-structured.json  # Grafana dashboard definition
 ├── CHANGELOG.md              # Version history
+├── docs/
+│   └── architecture.mmd      # Mermaid architecture source
 ├── CONTRIBUTING.md           # Contribution guidelines
 └── README.md                 # This file
 ```
@@ -621,10 +666,11 @@ oura-cf/
 | `BackfillWorkflow.run()`         | Durable backfill with per-resource steps                       |
 | `syncData()`                     | Parallel resource fetching orchestrator                        |
 | `ingestResource()`               | Fetch data from Oura API with pagination                       |
-| `saveToD1()`                     | Transform & save data to D1 (14 endpoints)                     |
+| `saveToD1()`                     | Transform & save data to D1 (multi-resource upserts)           |
 | `discoverOpenApiSpecUrl()`       | Auto-discover current Oura API spec URL                        |
 | `loadOuraResourcesFromOpenApi()` | Dynamic endpoint discovery from OpenAPI spec                   |
 | `getOuraAccessToken()`           | OAuth token management with auto-refresh                       |
+| `queue()`                        | Async webhook event processing and targeted single-doc ingest  |
 | `updateTableStats()`             | Pre-compute table statistics (7 tables)                        |
 | `flushSqlCache()`                | Invalidate KV-cached SQL query results                         |
 | `hashSqlQuery()`                 | SHA-256 cache key generation for SQL queries                   |
@@ -655,53 +701,9 @@ Quick summary:
 
 ## AI Development Resources
 
-Working with Cloudflare Workers and need AI assistance? These LLM-optimized resources are designed to help AI tools provide better, more accurate answers:
-
-### LLM-Optimized Documentation
-
-These URLs are specifically formatted for LLMs to consume as context:
-
-- **[Complete Developer Platform Docs](https://developers.cloudflare.com/developer-platform/llms-full.txt)** - Full Cloudflare developer documentation in LLM-friendly text format
-- **[Workers Documentation](https://developers.cloudflare.com/workers/llms-full.txt)** - Workers-specific documentation for AI tools
-- **[D1 Database Documentation](https://developers.cloudflare.com/d1/llms-full.txt)** - D1 SQL database reference
-- **[KV Documentation](https://developers.cloudflare.com/kv/llms-full.txt)** - Workers KV key-value storage
-- **[Durable Objects Documentation](https://developers.cloudflare.com/durable-objects/llms-full.txt)** - Stateful object coordination
-- **[R2 Documentation](https://developers.cloudflare.com/r2/llms-full.txt)** - Object storage reference
-- **[Workers AI Documentation](https://developers.cloudflare.com/workers-ai/llms-full.txt)** - AI inference on the edge
-- **[Vectorize Documentation](https://developers.cloudflare.com/vectorize/llms-full.txt)** - Vector database for embeddings
-- **[AI Gateway Documentation](https://developers.cloudflare.com/ai-gateway/llms-full.txt)** - AI API caching and observability
-
-### Model Context Protocol (MCP) Servers
-
-Connect your AI tools directly to Cloudflare's infrastructure:
-
-- **[MCP Servers for Cloudflare](https://developers.cloudflare.com/agents/model-context-protocol/mcp-servers-for-cloudflare/)** - Official MCP server integrations
-  - **Cloudflare MCP Server** - Query D1, KV, R2, and manage Workers
-  - **Wrangler MCP Server** - Deploy and manage Workers directly from AI tools
-
-### How to Use These Resources
-
-**For ChatGPT, Claude, or other LLMs:**
-
-```
-Read the Cloudflare Workers documentation: https://developers.cloudflare.com/workers/llms-full.txt
-
-Then help me with: [your question about this project]
-```
-
-**For AI Code Editors (Cursor, Windsurf, etc.):**
-
-- Add the `/llms-full.txt` URLs to your project context
-- Install MCP servers for real-time Cloudflare API access
-
-**For This Project Specifically:**
-
-```
-Context: Cloudflare Worker syncing Oura Ring health data to D1 database
-Stack: TypeScript, Workers, OAuth2, D1, KV, Workflows, Analytics Engine, cron triggers
-Docs needed: https://developers.cloudflare.com/workers/llms-full.txt
-             https://developers.cloudflare.com/d1/llms-full.txt
-```
+- Cloudflare Workers docs (LLM format): `https://developers.cloudflare.com/workers/llms-full.txt`
+- Cloudflare D1 docs (LLM format): `https://developers.cloudflare.com/d1/llms-full.txt`
+- Cloudflare MCP server docs: `https://developers.cloudflare.com/agents/model-context-protocol/mcp-servers-for-cloudflare/`
 
 ## License
 

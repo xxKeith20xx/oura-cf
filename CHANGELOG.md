@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 2026-04-11
+
+### Added
+
+- **Webhook-first ingestion pipeline**: public `/webhook/oura` endpoint now handles Oura challenge verification and signed delivery events (`x-oura-signature`, `x-oura-timestamp`) with replay protection.
+- **Cloudflare Queues integration**: webhook deliveries are buffered to `OURA_WEBHOOK_QUEUE` and processed asynchronously by a queue consumer for targeted single-document syncs.
+- **Webhook subscription admin endpoints**:
+  - `GET /api/admin/oura/webhooks`
+  - `POST /api/admin/oura/webhooks/sync`
+  - `POST /api/admin/oura/webhooks/renew`
+- **Webhook configuration secrets**: `OURA_WEBHOOK_CALLBACK_URL`, `OURA_WEBHOOK_VERIFICATION_TOKEN`, optional `OURA_WEBHOOK_SIGNING_SECRET`, and optional data/event type filters.
+
+### Changed
+
+- **Admin authorization tightened**: `/oauth/start`, `/backfill`, and `/backfill/status` now require admin bearer role.
+- **Workflow observability**: backfill workflow steps now log retry attempt numbers via `ctx.attempt`.
+- **Documentation refresh**: README updated for webhook-first architecture, queue bindings, OAuth-only model, and Access path guidance.
+
+### Removed
+
+- **PAT fallback removed**: `OURA_PAT` is no longer supported.
+
+### Security
+
+- **OAuth token handling hardened**: refresh token upsert no longer preserves stale values via `COALESCE`.
+- **Fail-fast refresh behavior**: refresh responses missing `refresh_token` now force re-authorization.
+
+### Breaking Changes
+
+- OAuth is now mandatory; PAT-based auth is removed.
+- Existing deployments must configure queue bindings and webhook secrets before/with deployment.
+- Access policies should keep `/webhook/oura` and `/oauth/callback` publicly reachable while protecting admin/api paths.
+
 ## [1.4.3] - 2026-04-01
 
 ### Fixed

@@ -9,14 +9,24 @@ GRAFANA_SECRET=
 # Admin secret for manual operations (backfill, etc.)
 ADMIN_SECRET=
 
-# Oura OAuth credentials (optional, only if using OAuth flow)
+# Oura OAuth credentials (required)
 OURA_CLIENT_ID=
 OURA_CLIENT_SECRET=
 OURA_SCOPES=email personal daily heartrate workout tag session spo2 stress heart_health ring_configuration
 
-# Oura Personal Access Token (alternative to OAuth)
-OURA_PAT=
+# Oura webhook configuration
+# Public URL that Oura will call (must include /webhook/oura route)
+OURA_WEBHOOK_CALLBACK_URL=
+# Shared verification token used during webhook subscription challenge
+OURA_WEBHOOK_VERIFICATION_TOKEN=
+# Optional override for signature verification secret (defaults to OURA_CLIENT_SECRET)
+# OURA_WEBHOOK_SIGNING_SECRET=
+# Optional clock skew tolerance for webhook timestamp checks in seconds (default: 300)
+# OURA_WEBHOOK_ALLOWED_SKEW_SECONDS=300
+# Optional comma-separated filters for subscription sync endpoint
+# OURA_WEBHOOK_DATA_TYPES=enhanced_tag,workout,session,sleep,daily_sleep,daily_readiness,daily_activity,daily_spo2,sleep_time,rest_mode_period,ring_configuration,daily_stress,daily_cardiovascular_age,daily_resilience,vo2_max
+# OURA_WEBHOOK_EVENT_TYPES=create,update,delete
 
 # Optional: Query limits and timeouts
 # MAX_QUERY_ROWS=50000         # Maximum rows returned from SQL queries (default: 50000)
-# QUERY_TIMEOUT_MS=10000       # Query timeout in milliseconds (default: 10000)
+# QUERY_TIMEOUT_MS=7000        # Query timeout in milliseconds (default: 7000)

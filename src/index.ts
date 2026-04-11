@@ -8,6 +8,7 @@ export interface Env {
 	RATE_LIMITER: RateLimit;
 	AUTH_RATE_LIMITER: RateLimit;
 	UNAUTH_RATE_LIMITER: RateLimit; // New: Rate limiter for unauthenticated requests
+	OURA_WEBHOOK_QUEUE: Queue<OuraWebhookQueueMessage>;
 	OURA_CACHE: KVNamespace;
 	OURA_ANALYTICS?: AnalyticsEngineDataset; // Analytics Engine for query/auth metrics
 	GRAFANA_SECRET: string;
@@ -15,7 +16,12 @@ export interface Env {
 	OURA_CLIENT_ID?: string;
 	OURA_CLIENT_SECRET?: string;
 	OURA_SCOPES?: string;
-	OURA_PAT?: string;
+	OURA_WEBHOOK_CALLBACK_URL?: string;
+	OURA_WEBHOOK_VERIFICATION_TOKEN?: string;
+	OURA_WEBHOOK_SIGNING_SECRET?: string;
+	OURA_WEBHOOK_ALLOWED_SKEW_SECONDS?: string;
+	OURA_WEBHOOK_DATA_TYPES?: string;
+	OURA_WEBHOOK_EVENT_TYPES?: string;
 	BACKFILL_WORKFLOW: Workflow; // Workflows binding for durable backfill orchestration
 	ALLOWED_ORIGINS?: string; // Comma-separated CORS origins (default: https://oura.keith20.dev)
 	MAX_QUERY_ROWS?: string; // Maximum rows to return from SQL queries (default: 50000)
@@ -60,6 +66,42 @@ interface OuraTokenResponse {
 interface OuraApiResponse<T> {
 	data: T[];
 	next_token?: string;
+}
+
+type OuraWebhookEventType = 'create' | 'update' | 'delete';
+
+type OuraWebhookDataType =
+	| 'tag'
+	| 'enhanced_tag'
+	| 'workout'
+	| 'session'
+	| 'sleep'
+	| 'daily_sleep'
+	| 'daily_readiness'
+	| 'daily_activity'
+	| 'daily_spo2'
+	| 'sleep_time'
+	| 'rest_mode_period'
+	| 'ring_configuration'
+	| 'daily_stress'
+	| 'daily_cardiovascular_age'
+	| 'daily_resilience'
+	| 'vo2_max';
+
+interface OuraWebhookQueueMessage {
+	eventType: OuraWebhookEventType;
+	dataType: OuraWebhookDataType;
+	objectId: string;
+	eventTime: string;
+	userId: string;
+}
+
+interface OuraWebhookSubscriptionModel {
+	id: string;
+	callback_url: string;
+	event_type: OuraWebhookEventType;
+	data_type: OuraWebhookDataType;
+	expiration_time: string;
 }
 
 type JsonRecord = Record<string, unknown>;
@@ -261,6 +303,26 @@ const MAX_BODY_SIZE = 1_048_576; // 1MB max request body size
 const SYNC_SCHEDULE_DISPLAY = 'Every 2 hours (0 */2 * * * UTC)';
 const SYNC_RESOURCE_CONCURRENCY = 4; // Parallel resources per sync run
 const DEFAULT_CORS_ORIGINS = ['https://oura.keith20.dev', 'http://localhost:3000', 'http://localhost:8787'];
+const WEBHOOK_REPLAY_TTL_SECONDS = 6 * 3600;
+const WEBHOOK_MAX_CLOCK_SKEW_SECONDS_DEFAULT = 300;
+const OURA_WEBHOOK_EVENT_TYPES_DEFAULT: OuraWebhookEventType[] = ['create', 'update', 'delete'];
+const OURA_WEBHOOK_DATA_TYPES_DEFAULT: OuraWebhookDataType[] = [
+	'enhanced_tag',
+	'workout',
+	'session',
+	'sleep',
+	'daily_sleep',
+	'daily_readiness',
+	'daily_activity',
+	'daily_spo2',
+	'sleep_time',
+	'rest_mode_period',
+	'ring_configuration',
+	'daily_stress',
+	'daily_cardiovascular_age',
+	'daily_resilience',
+	'vo2_max',
+];
 
 // Derive CORS origins from env each request — no mutable module-level state.
 function getCorsOrigins(env: Pick<Env, 'ALLOWED_ORIGINS'>): string[] {
@@ -269,6 +331,194 @@ function getCorsOrigins(env: Pick<Env, 'ALLOWED_ORIGINS'>): string[] {
 				.map((o) => o.trim())
 				.filter(Boolean)
 		: DEFAULT_CORS_ORIGINS;
+}
+
+function isWebhookEventType(value: string): value is OuraWebhookEventType {
+	return value === 'create' || value === 'update' || value === 'delete';
+}
+
+function isWebhookDataType(value: string): value is OuraWebhookDataType {
+	return (
+		value === 'tag' ||
+		value === 'enhanced_tag' ||
+		value === 'workout' ||
+		value === 'session' ||
+		value === 'sleep' ||
+		value === 'daily_sleep' ||
+		value === 'daily_readiness' ||
+		value === 'daily_activity' ||
+		value === 'daily_spo2' ||
+		value === 'sleep_time' ||
+		value === 'rest_mode_period' ||
+		value === 'ring_configuration' ||
+		value === 'daily_stress' ||
+		value === 'daily_cardiovascular_age' ||
+		value === 'daily_resilience' ||
+		value === 'vo2_max'
+	);
+}
+
+function parseWebhookEventTypes(raw: string | undefined): OuraWebhookEventType[] {
+	if (!raw) return [...OURA_WEBHOOK_EVENT_TYPES_DEFAULT];
+	const parsed = raw
+		.split(',')
+		.map((v) => v.trim())
+		.filter((v): v is OuraWebhookEventType => isWebhookEventType(v));
+	return parsed.length ? parsed : [...OURA_WEBHOOK_EVENT_TYPES_DEFAULT];
+}
+
+function parseWebhookDataTypes(raw: string | undefined): OuraWebhookDataType[] {
+	if (!raw) return [...OURA_WEBHOOK_DATA_TYPES_DEFAULT];
+	const parsed = raw
+		.split(',')
+		.map((v) => v.trim())
+		.filter((v): v is OuraWebhookDataType => isWebhookDataType(v));
+	return parsed.length ? parsed : [...OURA_WEBHOOK_DATA_TYPES_DEFAULT];
+}
+
+function getWebhookSkewSeconds(env: Env): number {
+	const configured = parseInt(env.OURA_WEBHOOK_ALLOWED_SKEW_SECONDS ?? '', 10);
+	if (Number.isFinite(configured) && configured > 0) return configured;
+	return WEBHOOK_MAX_CLOCK_SKEW_SECONDS_DEFAULT;
+}
+
+function getWebhookVerificationToken(env: Env): string {
+	if (!env.OURA_WEBHOOK_VERIFICATION_TOKEN || !env.OURA_WEBHOOK_VERIFICATION_TOKEN.trim()) {
+		throw new Error('Missing OURA_WEBHOOK_VERIFICATION_TOKEN secret');
+	}
+	return env.OURA_WEBHOOK_VERIFICATION_TOKEN.trim();
+}
+
+function getWebhookSigningSecret(env: Env): string {
+	const explicit = env.OURA_WEBHOOK_SIGNING_SECRET?.trim();
+	if (explicit) return explicit;
+	if (env.OURA_CLIENT_SECRET?.trim()) return env.OURA_CLIENT_SECRET.trim();
+	throw new Error('Missing webhook signing secret. Set OURA_WEBHOOK_SIGNING_SECRET or OURA_CLIENT_SECRET.');
+}
+
+function normalizeSignature(signatureHeader: string): string {
+	const trimmed = signatureHeader.trim();
+	const value = trimmed.includes('=') ? (trimmed.split('=').pop() ?? '') : trimmed;
+	return value.toLowerCase();
+}
+
+async function hmacSha256Hex(secret: string, message: string): Promise<string> {
+	const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+	const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(message));
+	return Array.from(new Uint8Array(sig))
+		.map((b) => b.toString(16).padStart(2, '0'))
+		.join('');
+}
+
+async function sha256Hex(message: string): Promise<string> {
+	const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(message));
+	return Array.from(new Uint8Array(digest))
+		.map((b) => b.toString(16).padStart(2, '0'))
+		.join('');
+}
+
+function mapDataTypeToSingleDocPath(dataType: OuraWebhookDataType, objectId: string): string {
+	const resource = dataType === 'vo2_max' ? 'vO2_max' : dataType;
+	return `https://api.ouraring.com/v2/usercollection/${resource}/${encodeURIComponent(objectId)}`;
+}
+
+function parseWebhookDeliveryPayload(value: unknown): OuraWebhookQueueMessage | null {
+	if (!isJsonRecord(value)) return null;
+	const eventTypeRaw = typeof value.event_type === 'string' ? value.event_type.trim() : '';
+	const dataTypeRaw = typeof value.data_type === 'string' ? value.data_type.trim() : '';
+	const objectId = typeof value.object_id === 'string' ? value.object_id.trim() : '';
+	const eventTime = typeof value.event_time === 'string' ? value.event_time.trim() : '';
+	const userId = typeof value.user_id === 'string' ? value.user_id.trim() : '';
+
+	if (!isWebhookEventType(eventTypeRaw) || !isWebhookDataType(dataTypeRaw)) return null;
+	if (!objectId || !eventTime || !userId) return null;
+
+	return {
+		eventType: eventTypeRaw,
+		dataType: dataTypeRaw,
+		objectId,
+		eventTime,
+		userId,
+	};
+}
+
+function getOuraWebhookClientCredentials(env: Env): { clientId: string; clientSecret: string } {
+	if (!env.OURA_CLIENT_ID || !env.OURA_CLIENT_SECRET) {
+		throw new Error('Missing OURA_CLIENT_ID/OURA_CLIENT_SECRET');
+	}
+	return {
+		clientId: env.OURA_CLIENT_ID,
+		clientSecret: env.OURA_CLIENT_SECRET,
+	};
+}
+
+async function requestOuraWebhookSubscriptions(
+	env: Env,
+	path: string,
+	method: 'GET' | 'POST' | 'PUT' | 'DELETE' = 'GET',
+	body?: unknown,
+): Promise<Response> {
+	const { clientId, clientSecret } = getOuraWebhookClientCredentials(env);
+	const headers = new Headers({
+		'x-client-id': clientId,
+		'x-client-secret': clientSecret,
+	});
+	const init: RequestInit = {
+		method,
+		headers,
+	};
+	if (body !== undefined) {
+		headers.set('Content-Type', 'application/json');
+		init.body = JSON.stringify(body);
+	}
+	return fetchWithRetry(`https://api.ouraring.com${path}`, init);
+}
+
+async function listOuraWebhookSubscriptions(env: Env): Promise<OuraWebhookSubscriptionModel[]> {
+	const res = await requestOuraWebhookSubscriptions(env, '/v2/webhook/subscription');
+	if (!res.ok) {
+		const text = await res.text().catch(() => '');
+		throw new Error(`List subscriptions failed (${res.status}): ${text.slice(0, 400)}`);
+	}
+	const json = await res.json().catch(() => null);
+	if (!Array.isArray(json)) {
+		throw new Error('List subscriptions returned invalid JSON');
+	}
+	return json as OuraWebhookSubscriptionModel[];
+}
+
+async function createOuraWebhookSubscription(
+	env: Env,
+	payload: {
+		callback_url: string;
+		verification_token: string;
+		event_type: OuraWebhookEventType;
+		data_type: OuraWebhookDataType;
+	},
+): Promise<OuraWebhookSubscriptionModel> {
+	const res = await requestOuraWebhookSubscriptions(env, '/v2/webhook/subscription', 'POST', payload);
+	if (!res.ok) {
+		const text = await res.text().catch(() => '');
+		throw new Error(`Create subscription failed (${res.status}): ${text.slice(0, 400)}`);
+	}
+	const json = await res.json().catch(() => null);
+	if (!isJsonRecord(json) || typeof json.id !== 'string') {
+		throw new Error('Create subscription returned invalid JSON');
+	}
+	return json as OuraWebhookSubscriptionModel;
+}
+
+async function renewOuraWebhookSubscription(env: Env, id: string): Promise<OuraWebhookSubscriptionModel> {
+	const res = await requestOuraWebhookSubscriptions(env, `/v2/webhook/subscription/renew/${encodeURIComponent(id)}`, 'PUT');
+	if (!res.ok) {
+		const text = await res.text().catch(() => '');
+		throw new Error(`Renew subscription failed (${res.status}): ${text.slice(0, 400)}`);
+	}
+	const json = await res.json().catch(() => null);
+	if (!isJsonRecord(json) || typeof json.id !== 'string') {
+		throw new Error('Renew subscription returned invalid JSON');
+	}
+	return json as OuraWebhookSubscriptionModel;
 }
 
 // Circuit breaker state (in-memory, resets on Worker restart)
@@ -590,6 +840,104 @@ export default {
 			return cors(Response.json({ message: 'OK' }, { status: 200 }));
 		}
 
+		if (url.pathname === '/webhook/oura') {
+			if (request.method === 'GET') {
+				const challenge = url.searchParams.get('challenge');
+				const verificationToken = url.searchParams.get('verification_token') ?? '';
+				if (!challenge) {
+					return cors(Response.json({ error: 'Missing challenge parameter' }, { status: 400 }));
+				}
+
+				let expectedToken = '';
+				try {
+					expectedToken = getWebhookVerificationToken(env);
+				} catch (err) {
+					return cors(Response.json({ error: err instanceof Error ? err.message : 'Webhook misconfigured' }, { status: 500 }));
+				}
+
+				const valid = await constantTimeCompare(verificationToken, expectedToken);
+				if (!valid) {
+					return cors(Response.json({ error: 'Invalid verification token' }, { status: 401 }));
+				}
+
+				return cors(Response.json({ challenge }, { status: 200 }));
+			}
+
+			if (request.method === 'POST') {
+				const signatureHeader = request.headers.get('x-oura-signature');
+				const timestampHeader = request.headers.get('x-oura-timestamp');
+				if (!signatureHeader || !timestampHeader) {
+					return cors(Response.json({ error: 'Missing signature headers' }, { status: 401 }));
+				}
+
+				const parsedTimestamp = Number(timestampHeader);
+				if (!Number.isFinite(parsedTimestamp)) {
+					return cors(Response.json({ error: 'Invalid webhook timestamp' }, { status: 400 }));
+				}
+
+				const timestampMs = parsedTimestamp > 1_000_000_000_000 ? parsedTimestamp : parsedTimestamp * 1000;
+				const skewSeconds = Math.abs(Date.now() - timestampMs) / 1000;
+				if (skewSeconds > getWebhookSkewSeconds(env)) {
+					return cors(Response.json({ error: 'Webhook timestamp outside allowed skew window' }, { status: 401 }));
+				}
+
+				const rawBody = await request.text();
+				let signingSecret = '';
+				try {
+					signingSecret = getWebhookSigningSecret(env);
+				} catch (err) {
+					return cors(Response.json({ error: err instanceof Error ? err.message : 'Webhook misconfigured' }, { status: 500 }));
+				}
+
+				const expectedSignature = await hmacSha256Hex(signingSecret, `${timestampHeader}${rawBody}`);
+				const provided = normalizeSignature(signatureHeader);
+				const validSignature = await constantTimeCompare(provided, expectedSignature);
+				if (!validSignature) {
+					return cors(Response.json({ error: 'Invalid webhook signature' }, { status: 401 }));
+				}
+
+				const parsed = (() => {
+					try {
+						return JSON.parse(rawBody) as unknown;
+					} catch {
+						return null;
+					}
+				})();
+				if (parsed === null) {
+					return cors(Response.json({ error: 'Invalid JSON payload' }, { status: 400 }));
+				}
+				const eventsRaw = Array.isArray(parsed) ? parsed : [parsed];
+				let accepted = 0;
+				let duplicate = 0;
+				let ignored = 0;
+
+				for (const value of eventsRaw) {
+					const payload = parseWebhookDeliveryPayload(value);
+					if (!payload) {
+						ignored++;
+						continue;
+					}
+
+					const replayKey = `webhook:seen:${await sha256Hex(
+						`${payload.eventType}|${payload.dataType}|${payload.objectId}|${payload.eventTime}|${payload.userId}`,
+					)}`;
+					const seen = await env.OURA_CACHE.get(replayKey);
+					if (seen) {
+						duplicate++;
+						continue;
+					}
+
+					await env.OURA_CACHE.put(replayKey, '1', { expirationTtl: WEBHOOK_REPLAY_TTL_SECONDS });
+					await env.OURA_WEBHOOK_QUEUE.send(payload);
+					accepted++;
+				}
+
+				return cors(Response.json({ accepted, duplicate, ignored }, { status: 202 }));
+			}
+
+			return cors(Response.json({ error: 'Method Not Allowed' }, { status: 405 }));
+		}
+
 		// Security: Validate authentication using constant-time comparison
 		const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
 		const isAuthenticated = await validateBearerToken(auth, env);
@@ -611,6 +959,7 @@ export default {
 
 		// Authentication successful - log it
 		await logAuthAttempt(true, request, env);
+		const authRole = await getBearerRole(auth, env);
 
 		// Rate limit authenticated endpoints to prevent abuse if token leaks
 		// Allows 3000 requests per minute per IP + token combination (50 per second sustained)
@@ -626,6 +975,9 @@ export default {
 		}
 
 		if (url.pathname === '/oauth/start') {
+			if (authRole !== 'admin') {
+				return cors(Response.json({ error: 'Forbidden: admin token required' }, { status: 403 }));
+			}
 			const userId = 'default';
 			const state = crypto.randomUUID();
 			const createdAt = Date.now();
@@ -658,6 +1010,9 @@ export default {
 		}
 
 		if (url.pathname === '/backfill') {
+			if (authRole !== 'admin') {
+				return cors(Response.json({ error: 'Forbidden: admin token required' }, { status: 403 }));
+			}
 			// Rate limit backfill: 1 request per 60 seconds per IP.
 			// Backfill is expensive (fans out to all Oura API endpoints + D1 writes),
 			// so this prevents accidental repeated triggers.
@@ -735,6 +1090,9 @@ export default {
 		}
 
 		if (url.pathname === '/backfill/status') {
+			if (authRole !== 'admin') {
+				return cors(Response.json({ error: 'Forbidden: admin token required' }, { status: 403 }));
+			}
 			const instanceId = url.searchParams.get('id');
 			if (!instanceId) {
 				return cors(Response.json({ error: 'Missing required parameter: id' }, { status: 400 }));
@@ -763,6 +1121,143 @@ export default {
 							details: message.slice(0, 500),
 						},
 						{ status: isNotFound ? 404 : 500 },
+					),
+				);
+			}
+		}
+
+		if (url.pathname === '/api/admin/oura/webhooks') {
+			if (authRole !== 'admin') {
+				return cors(Response.json({ error: 'Forbidden: admin token required' }, { status: 403 }));
+			}
+			if (request.method !== 'GET') {
+				return cors(Response.json({ error: 'Method Not Allowed' }, { status: 405 }));
+			}
+			try {
+				const subscriptions = await listOuraWebhookSubscriptions(env);
+				return cors(Response.json({ count: subscriptions.length, subscriptions }));
+			} catch (err) {
+				return cors(
+					Response.json(
+						{ error: 'Failed to list Oura webhook subscriptions', details: err instanceof Error ? err.message : String(err) },
+						{ status: 502 },
+					),
+				);
+			}
+		}
+
+		if (url.pathname === '/api/admin/oura/webhooks/sync') {
+			if (authRole !== 'admin') {
+				return cors(Response.json({ error: 'Forbidden: admin token required' }, { status: 403 }));
+			}
+			if (request.method !== 'POST') {
+				return cors(Response.json({ error: 'Method Not Allowed' }, { status: 405 }));
+			}
+
+			const callbackUrl = env.OURA_WEBHOOK_CALLBACK_URL?.trim();
+			if (!callbackUrl) {
+				return cors(Response.json({ error: 'Missing OURA_WEBHOOK_CALLBACK_URL secret' }, { status: 500 }));
+			}
+
+			let verificationToken = '';
+			try {
+				verificationToken = getWebhookVerificationToken(env);
+			} catch (err) {
+				return cors(Response.json({ error: err instanceof Error ? err.message : 'Webhook misconfigured' }, { status: 500 }));
+			}
+
+			const eventTypes = parseWebhookEventTypes(env.OURA_WEBHOOK_EVENT_TYPES);
+			const dataTypes = parseWebhookDataTypes(env.OURA_WEBHOOK_DATA_TYPES);
+
+			try {
+				const existing = await listOuraWebhookSubscriptions(env);
+				const existingKeys = new Set(
+					existing.filter((s) => s.callback_url === callbackUrl).map((s) => `${s.event_type}|${s.data_type}|${s.callback_url}`),
+				);
+
+				const created: OuraWebhookSubscriptionModel[] = [];
+				const errors: Array<{ eventType: OuraWebhookEventType; dataType: OuraWebhookDataType; error: string }> = [];
+
+				for (const eventType of eventTypes) {
+					for (const dataType of dataTypes) {
+						const key = `${eventType}|${dataType}|${callbackUrl}`;
+						if (existingKeys.has(key)) continue;
+						try {
+							const createdSub = await createOuraWebhookSubscription(env, {
+								callback_url: callbackUrl,
+								verification_token: verificationToken,
+								event_type: eventType,
+								data_type: dataType,
+							});
+							created.push(createdSub);
+						} catch (err) {
+							errors.push({
+								eventType,
+								dataType,
+								error: err instanceof Error ? err.message : String(err),
+							});
+						}
+					}
+				}
+
+				return cors(
+					Response.json({
+						callbackUrl,
+						desired: eventTypes.length * dataTypes.length,
+						existing: existingKeys.size,
+						created: created.length,
+						errors,
+						createdSubscriptions: created,
+					}),
+				);
+			} catch (err) {
+				return cors(
+					Response.json(
+						{ error: 'Failed to sync Oura webhook subscriptions', details: err instanceof Error ? err.message : String(err) },
+						{ status: 502 },
+					),
+				);
+			}
+		}
+
+		if (url.pathname === '/api/admin/oura/webhooks/renew') {
+			if (authRole !== 'admin') {
+				return cors(Response.json({ error: 'Forbidden: admin token required' }, { status: 403 }));
+			}
+			if (request.method !== 'POST') {
+				return cors(Response.json({ error: 'Method Not Allowed' }, { status: 405 }));
+			}
+			const daysRaw = Number(url.searchParams.get('days') ?? '7');
+			const days = Number.isFinite(daysRaw) ? Math.max(1, Math.min(365, Math.round(daysRaw))) : 7;
+			const thresholdMs = Date.now() + days * 86400000;
+
+			try {
+				const existing = await listOuraWebhookSubscriptions(env);
+				const renewed: OuraWebhookSubscriptionModel[] = [];
+				const skipped: string[] = [];
+				const errors: Array<{ id: string; error: string }> = [];
+
+				for (const subscription of existing) {
+					const expiresAt = Date.parse(subscription.expiration_time);
+					if (!Number.isFinite(expiresAt) || expiresAt > thresholdMs) {
+						skipped.push(subscription.id);
+						continue;
+					}
+					try {
+						renewed.push(await renewOuraWebhookSubscription(env, subscription.id));
+					} catch (err) {
+						errors.push({ id: subscription.id, error: err instanceof Error ? err.message : String(err) });
+					}
+				}
+
+				return cors(
+					Response.json({ thresholdDays: days, renewed: renewed.length, skipped: skipped.length, errors, renewedSubscriptions: renewed }),
+				);
+			} catch (err) {
+				return cors(
+					Response.json(
+						{ error: 'Failed to renew Oura webhook subscriptions', details: err instanceof Error ? err.message : String(err) },
+						{ status: 502 },
 					),
 				);
 			}
@@ -1180,6 +1675,91 @@ ${tableRows}
 
 		// No matching endpoint
 		return cors(Response.json({ error: 'Not Found' }, { status: 404 }));
+	},
+
+	async queue(batch: MessageBatch<OuraWebhookQueueMessage>, env: Env, ctx: ExecutionContext): Promise<void> {
+		let wroteData = false;
+
+		for (const message of batch.messages) {
+			const payload = message.body;
+			if (!payload || !isWebhookEventType(payload.eventType) || !isWebhookDataType(payload.dataType) || !payload.objectId) {
+				console.warn('Dropping invalid webhook queue message', { messageId: message.id });
+				message.ack();
+				continue;
+			}
+
+			if (payload.eventType === 'delete') {
+				message.ack();
+				continue;
+			}
+
+			try {
+				const token = await getOuraAccessToken(env);
+				const url = mapDataTypeToSingleDocPath(payload.dataType, payload.objectId);
+				const res = await withCircuitBreaker(
+					() =>
+						fetchWithRetry(url, {
+							headers: { Authorization: `Bearer ${token}` },
+						}),
+					`Webhook single-doc fetch - ${payload.dataType}`,
+				);
+
+				if (res.status === 404) {
+					message.ack();
+					continue;
+				}
+
+				if (res.status === 401 || res.status === 429 || res.status >= 500) {
+					message.retry({ delaySeconds: Math.min(300, message.attempts * 30) });
+					continue;
+				}
+
+				if (!res.ok) {
+					const errorText = await res.text().catch(() => '');
+					console.error('Dropping webhook message due to non-retryable response', {
+						messageId: message.id,
+						status: res.status,
+						body: errorText.slice(0, 300),
+					});
+					message.ack();
+					continue;
+				}
+
+				const json = (await res.json().catch(() => null)) as unknown;
+				if (!isJsonRecord(json)) {
+					message.ack();
+					continue;
+				}
+
+				await saveToD1(env, payload.dataType, [json]);
+				wroteData = true;
+				message.ack();
+			} catch (err) {
+				console.error('Webhook queue processing failed', {
+					messageId: message.id,
+					attempts: message.attempts,
+					error: err instanceof Error ? err.message : String(err),
+				});
+				message.retry({ delaySeconds: Math.min(300, message.attempts * 30) });
+			}
+		}
+
+		if (wroteData) {
+			await updateTableStats(env, { force: true });
+			if (env.OURA_CACHE) {
+				ctx.waitUntil(
+					flushSqlCache(env.OURA_CACHE)
+						.then((entriesFlushed) => {
+							console.log('Webhook queue flushed SQL cache', { entriesFlushed });
+						})
+						.catch((err) => {
+							console.warn('Webhook queue cache flush failed (non-fatal)', {
+								error: err instanceof Error ? err.message : String(err),
+							});
+						}),
+				);
+			}
+		}
 	},
 };
 
@@ -2131,7 +2711,7 @@ async function upsertOauthToken(env: Env, userId: string, token: OuraTokenRespon
 	await env.oura_db
 		.prepare(
 			'INSERT INTO oura_oauth_tokens (user_id, access_token, refresh_token, expires_at, scope, token_type) VALUES (?, ?, ?, ?, ?, ?) ' +
-				"ON CONFLICT(user_id) DO UPDATE SET access_token=excluded.access_token, refresh_token=COALESCE(excluded.refresh_token, oura_oauth_tokens.refresh_token), expires_at=excluded.expires_at, scope=excluded.scope, token_type=excluded.token_type, updated_at=(strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
+				"ON CONFLICT(user_id) DO UPDATE SET access_token=excluded.access_token, refresh_token=excluded.refresh_token, expires_at=excluded.expires_at, scope=excluded.scope, token_type=excluded.token_type, updated_at=(strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
 		)
 		.bind(userId, token.access_token, token.refresh_token ?? null, expiresAt, token.scope ?? null, token.token_type ?? null)
 		.run();
@@ -2150,12 +2730,6 @@ async function getOuraAccessToken(env: Env): Promise<string> {
 		.first<OuraOAuthTokenRow>();
 
 	if (!row) {
-		// No token in database, fall back to PAT if available
-		if (env.OURA_PAT) {
-			// Cache PAT with a far future expiration (it doesn't expire)
-			tokenCache = { token: env.OURA_PAT, expiresAt: Date.now() + 86400000 };
-			return env.OURA_PAT;
-		}
 		throw new Error('No OAuth token found. Visit /oauth/start to authorize.');
 	}
 
@@ -2175,6 +2749,9 @@ async function getOuraAccessToken(env: Env): Promise<string> {
 
 	if (refreshToken) {
 		const refreshed = await refreshAccessToken(env, refreshToken);
+		if (!refreshed.refresh_token || typeof refreshed.refresh_token !== 'string') {
+			throw new Error('Token refresh response missing refresh_token. Re-authorize via /oauth/start.');
+		}
 		await upsertOauthToken(env, userId, refreshed);
 		// Cache the refreshed token
 		const newExpiresAt =
@@ -2185,10 +2762,6 @@ async function getOuraAccessToken(env: Env): Promise<string> {
 		return refreshed.access_token;
 	}
 
-	if (env.OURA_PAT) {
-		tokenCache = { token: env.OURA_PAT, expiresAt: Date.now() + 86400000 };
-		return env.OURA_PAT;
-	}
 	throw new Error('No OAuth refresh token found. Visit /oauth/start to authorize.');
 }
 
@@ -2394,7 +2967,12 @@ export class BackfillWorkflow extends WorkflowEntrypoint<Env, BackfillParams> {
 					// Generous timeout: large resources (heartrate) with many chunks can take minutes
 					timeout: '5 minutes',
 				},
-				async () => {
+				async (stepContext) => {
+					console.log('Backfill resource step attempt', {
+						instanceId: event.instanceId,
+						resource: r.resource,
+						attempt: stepContext.attempt,
+					});
 					try {
 						if (r.queryMode === 'none') {
 							await ingestResource(this.env, r, null);
