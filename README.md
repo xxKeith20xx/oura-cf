@@ -59,17 +59,17 @@ Diagram source: `docs/architecture.mmd`
 
 ```mermaid
 flowchart LR
-  Oura[Oura Cloud API<br/>OAuth + Webhooks]
-  Worker[Cloudflare Worker<br/>oura-cf]
-  Webhook[/webhook/oura<br/>public]
-  Admin[/api/admin/oura/webhooks*<br/>Access + admin token]
-  Queue[Cloudflare Queue<br/>oura-webhook-events]
-  D1[(D1: oura_db)]
-  KV[(KV: OURA_CACHE)]
-  AE[(Analytics Engine)]
-  WF[Backfill Workflow]
-  Cron[Cron<br/>0 */2 * * *]
-  Grafana[Grafana<br/>Infinity datasource]
+  Oura["Oura Cloud API<br/>OAuth + Webhooks"]
+  Worker["Cloudflare Worker<br/>oura-cf"]
+  Webhook["/webhook/oura<br/>public"]
+  Admin["/api/admin/oura/webhooks*<br/>Access + admin token"]
+  Queue["Cloudflare Queue<br/>oura-webhook-events"]
+  D1[("D1: oura_db")]
+  KV[("KV: OURA_CACHE")]
+  AE[("Analytics Engine")]
+  WF["Backfill Workflow"]
+  Cron["Cron<br/>0 */2 * * *"]
+  Grafana["Grafana<br/>Infinity datasource"]
 
   Oura -->|webhook delivery| Webhook
   Oura -->|OAuth token exchange| Worker
