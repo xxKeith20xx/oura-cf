@@ -1773,7 +1773,7 @@ ${tableRows}
 		}
 
 		if (wroteData) {
-			await updateTableStats(env, { force: true });
+			await updateTableStats(env);
 			if (env.OURA_CACHE) {
 				ctx.waitUntil(
 					flushSqlCache(env.OURA_CACHE)
