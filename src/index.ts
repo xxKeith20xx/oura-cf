@@ -442,6 +442,26 @@ function parseWebhookDeliveryPayload(value: unknown): OuraWebhookQueueMessage | 
 	};
 }
 
+function parseWebhookSubscriptionModel(value: unknown): OuraWebhookSubscriptionModel | null {
+	if (!isJsonRecord(value)) return null;
+	const id = typeof value.id === 'string' ? value.id.trim() : '';
+	const callbackUrl = typeof value.callback_url === 'string' ? value.callback_url.trim() : '';
+	const eventTypeRaw = typeof value.event_type === 'string' ? value.event_type.trim() : '';
+	const dataTypeRaw = typeof value.data_type === 'string' ? value.data_type.trim() : '';
+	const expirationTime = typeof value.expiration_time === 'string' ? value.expiration_time.trim() : '';
+
+	if (!id || !callbackUrl || !expirationTime) return null;
+	if (!isWebhookEventType(eventTypeRaw) || !isWebhookDataType(dataTypeRaw)) return null;
+
+	return {
+		id,
+		callback_url: callbackUrl,
+		event_type: eventTypeRaw,
+		data_type: dataTypeRaw,
+		expiration_time: expirationTime,
+	};
+}
+
 function getOuraWebhookClientCredentials(env: Env): { clientId: string; clientSecret: string } {
 	if (!env.OURA_CLIENT_ID || !env.OURA_CLIENT_SECRET) {
 		throw new Error('Missing OURA_CLIENT_ID/OURA_CLIENT_SECRET');
@@ -484,7 +504,13 @@ async function listOuraWebhookSubscriptions(env: Env): Promise<OuraWebhookSubscr
 	if (!Array.isArray(json)) {
 		throw new Error('List subscriptions returned invalid JSON');
 	}
-	return json as OuraWebhookSubscriptionModel[];
+	return json.map((item) => {
+		const parsed = parseWebhookSubscriptionModel(item);
+		if (!parsed) {
+			throw new Error('List subscriptions returned invalid item');
+		}
+		return parsed;
+	});
 }
 
 async function createOuraWebhookSubscription(
@@ -502,10 +528,11 @@ async function createOuraWebhookSubscription(
 		throw new Error(`Create subscription failed (${res.status}): ${text.slice(0, 400)}`);
 	}
 	const json = await res.json().catch(() => null);
-	if (!isJsonRecord(json) || typeof json.id !== 'string') {
+	const parsed = parseWebhookSubscriptionModel(json);
+	if (!parsed) {
 		throw new Error('Create subscription returned invalid JSON');
 	}
-	return json as OuraWebhookSubscriptionModel;
+	return parsed;
 }
 
 async function renewOuraWebhookSubscription(env: Env, id: string): Promise<OuraWebhookSubscriptionModel> {
@@ -515,10 +542,11 @@ async function renewOuraWebhookSubscription(env: Env, id: string): Promise<OuraW
 		throw new Error(`Renew subscription failed (${res.status}): ${text.slice(0, 400)}`);
 	}
 	const json = await res.json().catch(() => null);
-	if (!isJsonRecord(json) || typeof json.id !== 'string') {
+	const parsed = parseWebhookSubscriptionModel(json);
+	if (!parsed) {
 		throw new Error('Renew subscription returned invalid JSON');
 	}
-	return json as OuraWebhookSubscriptionModel;
+	return parsed;
 }
 
 // Circuit breaker state (in-memory, resets on Worker restart)
