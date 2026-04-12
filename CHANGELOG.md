@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.1] - 2026-04-12
+
+### Fixed
+
+- **Health endpoint test version drift**: test now imports version from `package.json` instead of hardcoding it, preventing CI failures on every version bump.
+- **Release workflow triggers on stale v1.x tags**: tag pattern narrowed to `v2*.*.*` so old v1.x tags cannot trigger the release workflow.
+- **Release workflow fails on missing CHANGELOG entry**: changelog extraction is now non-fatal — produces a fallback release body instead of `exit 1`.
+- **`wrangler.starter.jsonc` not auto-staged on version bump**: added to the `version` npm script's `git add` list alongside `wrangler.jsonc` and `vitest.config.mts`.
+
 ## [2.1.0] - 2026-04-12
 
 ### Security

@@ -74,10 +74,23 @@ Optional: `OURA_WEBHOOK_SIGNING_SECRET`, `OURA_WEBHOOK_ALLOWED_SKEW_SECONDS`, `O
 
 ## Release Process
 
-Use `npm version patch|minor|major` to bump version. `scripts/sync-version.sh` syncs app version into wrangler/vitest config.
+When asked to create a release, follow this exact order:
 
-For detailed procedures, use:
+1. **Run `npm run check`** — lint + format + tests must pass before any version bump.
+2. **Update `CHANGELOG.md`** — add `## [x.y.z] - YYYY-MM-DD` entry at the top with categorized changes. The GitHub Release workflow reads CHANGELOG.md to build the release body; it must exist before the tag is pushed.
+3. **Run `npm version patch|minor|major`** — this automatically:
+   - Bumps `package.json` version
+   - Runs `scripts/sync-version.sh` (updates `wrangler.jsonc`, `wrangler.starter.jsonc`, `vitest.config.mts`)
+   - Auto-stages those 3 files via the `version` npm script
+   - Creates a git commit and `vx.y.z` tag
+4. **Verify the commit** includes all version-carrying files (`package.json`, `wrangler.jsonc`, `wrangler.starter.jsonc`, `vitest.config.mts`).
+5. **Deploy** with `npm run deploy:cf` and verify `/health` returns the new version.
+6. **Push** with `git push && git push --tags`. The `v2*` tag triggers the **Create Release** GitHub Action automatically.
 
-- `docs/RUNBOOK.md`
-- `docs/RELEASE_CHECKLIST.md`
-- `docs/ENVIRONMENT.md`
+Key guardrails:
+
+- The health endpoint test reads version from `package.json` via import — it can never drift.
+- The release workflow only triggers on `v2*.*.*` tags (old v1.x tags are ignored).
+- If a version is missing from CHANGELOG.md, the release workflow produces a minimal fallback body instead of failing CI.
+
+For detailed procedures, see `docs/RELEASE_CHECKLIST.md`.

@@ -1,6 +1,7 @@
 import { env, createExecutionContext, createMessageBatch, getQueueResult, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 import worker from '../src/index';
+import { version as APP_VERSION } from '../package.json';
 
 const AUTH_HEADER = { Authorization: 'Bearer test-grafana-secret' };
 
@@ -71,7 +72,7 @@ describe('Health Endpoint', () => {
 		const data = (await response.json()) as any;
 		expect(data).toMatchObject({
 			status: 'ok',
-			version: '2.0.3',
+			version: APP_VERSION,
 		});
 		expect(data.timestamp).toBeDefined();
 		// request debug info is admin-only — not present without auth
