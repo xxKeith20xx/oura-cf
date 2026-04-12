@@ -85,6 +85,57 @@ flowchart LR
   Grafana -->|POST /api/sql<br/>GET /api/stats| Worker
 ```
 
+### How It Works
+
+Three ingestion paths write data into D1, and one query path serves it to Grafana:
+
+```
+Oura Ring ──> Oura Cloud API
+                  │
+     ┌────────────┼────────────┐
+     ▼            ▼            ▼
+  WEBHOOK       CRON       BACKFILL
+  (real-time)  (2h poll)  (manual, durable)
+     │            │            │
+     ▼            ▼            ▼
+  Queue ──┐   syncData()   Workflows
+          │       │            │
+          └───────┴────────────┘
+                  │
+                  ▼
+              saveToD1()
+                  │
+                  ▼
+           D1 (9 tables)
+                  │
+                  ▼
+         /api/sql (Grafana)
+```
+
+**Webhook** (primary, real-time): Oura pushes `create`/`update`/`delete` events to `/webhook/oura`. The handler validates the HMAC signature, deduplicates via KV (24h TTL), and enqueues to a Cloudflare Queue. The queue consumer fetches the full document from the Oura API and writes to D1.
+
+**Cron** (reconciliation): Every 2 hours, discovers available endpoints from the Oura OpenAPI spec (cached 24h in KV), fetches the last 3 days of data with bounded concurrency (4 workers), and upserts into D1. Protected by a KV lock to prevent overlap.
+
+**Backfill** (manual, durable): Admin triggers via `/backfill`. Uses Cloudflare Workflows for durable, step-by-step execution where each resource sync is independently retryable.
+
+**Query path**: Grafana uses the Infinity datasource to `POST /api/sql` with raw SQL. The handler authenticates the Bearer token, validates the SQL is read-only, checks the KV cache (6h TTL), executes against D1 with a 7s timeout and 50K row cap, then caches the result.
+
+### Infrastructure Patterns
+
+| Pattern                       | Implementation                                                                                                                                |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Auth**                      | Dual Bearer tokens: `GRAFANA_SECRET` (read-only) and `ADMIN_SECRET` (admin routes). Constant-time comparison via SHA-256 + `timingSafeEqual`. |
+| **Rate limiting**             | Three Cloudflare Rate Limit bindings: public (1/min), authenticated (3000/min), failed auth (10/min).                                         |
+| **Circuit breaker**           | Opens after 5 consecutive Oura API failures, half-opens after 5 min, resets on success.                                                       |
+| **Token refresh dedup**       | Shared promise prevents concurrent OAuth refresh calls from racing.                                                                           |
+| **Cron overlap protection**   | KV key `sync:cron_lock` with 2h TTL; deleted in `finally`.                                                                                    |
+| **SQL injection prevention**  | `isReadOnlySql()` strips identifier quotes, blocks writes/DDL/PRAGMA/sensitive tables.                                                        |
+| **Webhook replay protection** | KV-seen keys with 24h TTL prevent duplicate processing.                                                                                       |
+| **Cache invalidation**        | `flushSqlCache()` wipes all `sql:` KV keys after any data write (cron, webhook, backfill).                                                    |
+| **D1 batch chunking**         | `batchInChunks()` splits statements into groups of 100.                                                                                       |
+| **Query complexity analysis** | Heuristic scoring (joins, subqueries, unions, GROUP BY); warns at score > 100.                                                                |
+| **Analytics**                 | Auth attempts and SQL queries logged to Analytics Engine for observability.                                                                   |
+
 ### Technology Stack
 
 | Component          | Technology             | Purpose                          |
@@ -247,6 +298,8 @@ curl "https://your-host/backfill/status?id=INSTANCE_ID" \
 
 ### Data Flow
 
+**Dynamic Endpoint Discovery**: The Worker auto-discovers available Oura API endpoints by fetching the OpenAPI spec URL from the Oura docs page, with fallback to a known version. This makes the system resilient to Oura API version bumps.
+
 ```
 Oura Docs Page → Discover Spec URL → Fetch OpenAPI Spec → KV Cache (24hr)
                                             ↓
@@ -256,8 +309,6 @@ Oura Docs Page → Discover Spec URL → Fetch OpenAPI Spec → KV Cache (24hr)
                                             ↓
                                     D1 Database (upsert)
 ```
-
-**Dynamic Endpoint Discovery**: The Worker auto-discovers available Oura API endpoints by fetching the OpenAPI spec URL from the Oura docs page, with fallback to a known version. This makes the system resilient to Oura API version bumps.
 
 **Upsert Strategy**: Multiple Oura endpoints write to the same `daily_summaries` row (keyed by `day`), allowing data from `daily_readiness`, `daily_sleep`, `daily_activity`, and `sleep_time` to merge into a single denormalized record.
 
