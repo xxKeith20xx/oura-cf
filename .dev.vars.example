@@ -1,20 +1,13 @@
-# Cloudflare Account ID (required for wrangler deploy)
-# Get this from: wrangler whoami
-# Or set as environment variable: export CLOUDFLARE_ACCOUNT_ID="your-account-id"
-CLOUDFLARE_ACCOUNT_ID=
-
-# Grafana API authentication token (used by Grafana Infinity datasource)
-GRAFANA_SECRET=
-
-# Admin secret for manual operations (backfill, etc.)
-ADMIN_SECRET=
-
-# Oura OAuth credentials (required)
+# Oura API credentials (from https://cloud.ouraring.com)
 OURA_CLIENT_ID=
 OURA_CLIENT_SECRET=
-OURA_SCOPES=email personal daily heartrate workout tag session spo2 stress heart_health ring_configuration
+OURA_SCOPES=email personal daily heartrate workout tag session spo2 stress heart_health
 
-# Oura webhook configuration
+# Bearer tokens for API access
+GRAFANA_SECRET=
+ADMIN_SECRET=
+
+# Webhook configuration
 # Public URL that Oura will call (must include /webhook/oura route)
 OURA_WEBHOOK_CALLBACK_URL=
 # Shared verification token used during webhook subscription challenge
@@ -24,9 +17,16 @@ OURA_WEBHOOK_VERIFICATION_TOKEN=
 # Optional clock skew tolerance for webhook timestamp checks in seconds (default: 300)
 # OURA_WEBHOOK_ALLOWED_SKEW_SECONDS=300
 # Optional comma-separated filters for subscription sync endpoint
-# OURA_WEBHOOK_DATA_TYPES=enhanced_tag,workout,session,sleep,daily_sleep,daily_readiness,daily_activity,daily_spo2,sleep_time,rest_mode_period,ring_configuration,daily_stress,daily_cardiovascular_age,daily_resilience,vo2_max
+# OURA_WEBHOOK_DATA_TYPES=enhanced_tag,workout,session,sleep,daily_sleep,daily_readiness,daily_activity,daily_spo2,sleep_time,rest_mode_period,daily_stress,daily_cardiovascular_age,daily_resilience,vo2_max
 # OURA_WEBHOOK_EVENT_TYPES=create,update,delete
 
+# CORS origins (set in wrangler.jsonc vars for production, or here for local dev)
+# ALLOWED_ORIGINS=https://your-domain.example.com
+
 # Optional: Query limits and timeouts
-# MAX_QUERY_ROWS=50000         # Maximum rows returned from SQL queries (default: 50000)
-# QUERY_TIMEOUT_MS=7000        # Query timeout in milliseconds (default: 7000)
+# MAX_QUERY_ROWS=50000
+# QUERY_TIMEOUT_MS=7000
+
+# Cloudflare Access service token (for testing Access-protected deployments)
+# CF_ACCESS_CLIENT_ID=
+# CF_ACCESS_CLIENT_SECRET=

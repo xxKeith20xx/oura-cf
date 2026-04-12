@@ -21,11 +21,12 @@ A Cloudflare Worker that syncs Oura Ring health data to a D1 database and serves
 - **Test Coverage**: Automated tests covering auth, SQL safety, webhook verification, and queue ingestion
 - **Production-Ready**: Comprehensive logging, error handling, observability, and monitoring
 
-## Release Notes (v2.0.0)
+## Release Notes (v2.1.0)
 
-- OAuth is now required; PAT fallback was removed.
-- Webhook-first ingestion is now the primary freshness path, with cron/backfill as fallback.
-- Queue bindings + webhook secrets are required for full production operation.
+- Security hardening: SQL injection via quoted identifiers, error detail leakage, CORS localhost defaults, webhook replay window, OpenAPI domain allowlist, concurrent token refresh dedup, cron overlap protection.
+- Performance: incremental heart rate stats, DB growth monitoring (`/api/db/info`), webhook delivery freshness tracking.
+- Repo cleanup: removed tutorial docs, stale scripts, and `.gitattributes` binary JSON misconfiguration.
+- See [CHANGELOG.md](CHANGELOG.md) for full history.
 
 ## Table of Contents
 
@@ -55,7 +56,7 @@ A Cloudflare Worker that syncs Oura Ring health data to a D1 database and serves
 
 ## Architecture
 
-Diagram source: `docs/architecture.mmd`
+Diagram source: `docs/architecture.excalidraw` (also see `architecture.svg`)
 
 ```mermaid
 flowchart LR
@@ -97,7 +98,7 @@ flowchart LR
 | **Authentication** | Oura OAuth2            | Secure API access                |
 | **Visualization**  | Grafana Cloud          | Dashboards and analytics         |
 | **Language**       | TypeScript 5.9         | Type-safe development            |
-| **Testing**        | Vitest + Workers Pool  | 56 tests with Miniflare bindings |
+| **Testing**        | Vitest + Workers Pool  | 57 tests with Miniflare bindings |
 | **Deployment**     | Wrangler 4.81+         | CLI deployment tool              |
 
 ## Quick Start
@@ -116,6 +117,17 @@ Two deployment modes are supported:
 - **Maintainer mode (fastest for this repo owner)**: use `wrangler.jsonc` as-is for production.
 - **Starter mode (new deployers/forks)**: use `wrangler.starter.jsonc` and replace placeholder IDs.
 
+#### Step 1: Oura Developer Portal
+
+Before deploying, you need Oura API credentials:
+
+1. Go to [cloud.ouraring.com](https://cloud.ouraring.com/) and sign in
+2. Create a new application
+3. Note your **Client ID** and **Client Secret**
+4. Set the **Redirect URI** to `https://your-host/oauth/callback` (use your actual domain)
+
+#### Step 2: Clone and Install
+
 ```bash
 # Clone repository
 git clone https://github.com/xxKeith20xx/oura-cf.git
@@ -126,25 +138,37 @@ npm install
 
 # If deploying your own copy, use starter config
 cp wrangler.starter.jsonc wrangler.local.jsonc
+```
 
-# Configure Cloudflare secrets
+#### Step 3: Create Cloudflare Resources
+
+```bash
+# Create D1 database
+npx wrangler d1 create oura-db
+# Note the database_id from the output — update wrangler.local.jsonc
+
+# Create KV namespace
+npx wrangler kv namespace create OURA_CACHE
+# Note the id from the output — update wrangler.local.jsonc
+
+# Create Queue
+npx wrangler queues create oura-webhook-events
+```
+
+#### Step 4: Configure Secrets
+
+```bash
 npx wrangler secret put GRAFANA_SECRET      # Token for Grafana datasource auth
 npx wrangler secret put ADMIN_SECRET        # Token for manual admin operations
 npx wrangler secret put OURA_CLIENT_ID      # From Oura developer portal
 npx wrangler secret put OURA_CLIENT_SECRET  # From Oura developer portal
-npx wrangler secret put OURA_WEBHOOK_CALLBACK_URL
-npx wrangler secret put OURA_WEBHOOK_VERIFICATION_TOKEN
+npx wrangler secret put OURA_WEBHOOK_CALLBACK_URL  # e.g. https://your-host/webhook/oura
+npx wrangler secret put OURA_WEBHOOK_VERIFICATION_TOKEN  # Random string for webhook verification
+```
 
-# Create D1 database
-npx wrangler d1 create oura-db
+#### Step 5: Apply Migrations and Deploy
 
-# Create KV + queues
-npx wrangler kv namespace create OURA_CACHE
-npx wrangler queues create oura-webhook-events
-npx wrangler queues create oura-webhook-events-dlq
-
-# Update wrangler.local.jsonc with your database_id + kv namespace id
-
+```bash
 # Apply database migrations
 npx wrangler d1 migrations apply oura-db --remote
 
@@ -257,6 +281,7 @@ Rate limit: 3000 requests per minute per IP (applies to all authenticated endpoi
 
 | Endpoint                         | Method | Description                                                | Cache TTL |
 | -------------------------------- | ------ | ---------------------------------------------------------- | --------- |
+| `/api/db/info`                   | GET    | Database size and growth metrics                           | N/A       |
 | `/status`                        | GET    | Pipeline status page (HTML) — record counts, last sync     | 5 minutes |
 | `/oauth/start`                   | GET    | Initiate Oura OAuth flow                                   | N/A       |
 | `/backfill`                      | GET    | Start backfill workflow (1 req/60s)                        | N/A       |
@@ -343,8 +368,8 @@ npm run deploy:cf
 ### Manual Deployment
 
 ```bash
-# Run database migrations (if schema changed)
-npx wrangler d1 migrations apply oura-db --remote
+# Run database migrations (only when schema changes)
+npm run db:migrate
 
 # Deploy Worker
 npx wrangler deploy
@@ -382,22 +407,22 @@ npx wrangler deploy
 
 ### Environment Variables (Secrets)
 
-| Secret                              | Required | Description                                                          |
-| ----------------------------------- | -------- | -------------------------------------------------------------------- |
-| `GRAFANA_SECRET`                    | Yes      | Bearer token for Grafana datasource auth                             |
-| `ADMIN_SECRET`                      | No       | Separate token for manual admin operations                           |
-| `OURA_CLIENT_ID`                    | Yes      | OAuth2 client ID from Oura developer portal                          |
-| `OURA_CLIENT_SECRET`                | Yes      | OAuth2 client secret from Oura developer portal                      |
-| `OURA_WEBHOOK_CALLBACK_URL`         | Yes      | Public callback URL for Oura webhook subscriptions (for sync route)  |
-| `OURA_WEBHOOK_VERIFICATION_TOKEN`   | Yes      | Shared token used for Oura webhook challenge verification            |
-| `OURA_WEBHOOK_SIGNING_SECRET`       | No       | Optional webhook signature secret (defaults to `OURA_CLIENT_SECRET`) |
-| `OURA_WEBHOOK_ALLOWED_SKEW_SECONDS` | No       | Allowed timestamp skew for webhook signatures (default: 300)         |
-| `OURA_WEBHOOK_DATA_TYPES`           | No       | Comma-separated webhook data types to manage via sync endpoint       |
-| `OURA_WEBHOOK_EVENT_TYPES`          | No       | Comma-separated event types (`create,update,delete`)                 |
-| `ALLOWED_ORIGINS`                   | No       | Comma-separated CORS origins                                         |
-| `MAX_QUERY_ROWS`                    | No       | Maximum rows from SQL queries (default: 50000)                       |
-| `QUERY_TIMEOUT_MS`                  | No       | Query timeout in milliseconds (default: 7000, clamped to 1000-15000) |
-| `LOG_SQL_PREVIEW`                   | No       | Set `false` to disable SQL preview text in logs/analytics            |
+| Secret                              | Required | Description                                                                              |
+| ----------------------------------- | -------- | ---------------------------------------------------------------------------------------- |
+| `GRAFANA_SECRET`                    | Yes      | Bearer token for Grafana datasource auth                                                 |
+| `ADMIN_SECRET`                      | No       | Separate token for manual admin operations                                               |
+| `OURA_CLIENT_ID`                    | Yes      | OAuth2 client ID from Oura developer portal                                              |
+| `OURA_CLIENT_SECRET`                | Yes      | OAuth2 client secret from Oura developer portal                                          |
+| `OURA_WEBHOOK_CALLBACK_URL`         | Yes      | Public callback URL for Oura webhook subscriptions (for sync route)                      |
+| `OURA_WEBHOOK_VERIFICATION_TOKEN`   | Yes      | Shared token used for Oura webhook challenge verification                                |
+| `OURA_WEBHOOK_SIGNING_SECRET`       | No       | Optional webhook signature secret (defaults to `OURA_CLIENT_SECRET`)                     |
+| `OURA_WEBHOOK_ALLOWED_SKEW_SECONDS` | No       | Allowed timestamp skew for webhook signatures (default: 300)                             |
+| `OURA_WEBHOOK_DATA_TYPES`           | No       | Comma-separated webhook data types to manage via sync endpoint                           |
+| `OURA_WEBHOOK_EVENT_TYPES`          | No       | Comma-separated event types (`create,update,delete`)                                     |
+| `ALLOWED_ORIGINS`                   | No       | Comma-separated CORS origins (set in `wrangler.jsonc` vars; required for browser access) |
+| `MAX_QUERY_ROWS`                    | No       | Maximum rows from SQL queries (default: 50000)                                           |
+| `QUERY_TIMEOUT_MS`                  | No       | Query timeout in milliseconds (default: 7000, clamped to 1000-15000)                     |
+| `LOG_SQL_PREVIEW`                   | No       | Set `false` to disable SQL preview text in logs/analytics                                |
 
 ### Wrangler Configuration
 
@@ -417,7 +442,6 @@ Key settings in `wrangler.jsonc`:
 				"max_batch_size": 10,
 				"max_batch_timeout": 5,
 				"max_retries": 8,
-				"dead_letter_queue": "oura-webhook-events-dlq",
 			},
 		],
 	},
@@ -511,7 +535,8 @@ For stronger perimeter auth and centralized audit logs, protect admin/API endpoi
 
 3. **Import Dashboard**
    ```bash
-   # Use provided dashboard JSON
+   # Use provided dashboard JSON (contains https://YOUR_HOST placeholders)
+   # These URLs are overridden by your datasource config — just import as-is
    cat grafana-dashboard-structured.json
    # Import via Grafana UI -> Dashboards -> Import
    ```
@@ -571,7 +596,7 @@ ORDER BY day
 ### SQL Injection Prevention
 
 - **Read-only enforcement**: Blocks INSERT, UPDATE, DELETE, DROP, ALTER, PRAGMA, VACUUM, ATTACH, REPLACE INTO
-- **Sensitive table filtering**: Queries against `oura_oauth_tokens` and `oura_oauth_states` are blocked
+- **Sensitive table filtering**: Queries against `oura_oauth_tokens` and `oura_oauth_states` are blocked (including quoted identifier variants like `"oura_oauth_tokens"`)
 - **Comment stripping**: Removes `--` and `/* */` comments before validation
 - **Multi-statement blocking**: Rejects queries containing semicolons
 - **Leading wildcard blocking**: Rejects `LIKE '%...'` patterns that force full table scans
@@ -620,8 +645,8 @@ The project uses Vitest with `@cloudflare/vitest-pool-workers` for testing again
 npm test          # Watch mode
 npm run test:run  # Single run
 
-# 56 tests (54 passing, 2 skipped)
-# Coverage: auth, SQL injection, param validation, LIMIT capping,
+# 57 tests (55 passing, 2 skipped)
+# Coverage: auth, SQL injection (including quoted identifier bypass), param validation, LIMIT capping,
 #           CORS origins, daily_summaries, 404 handling, root endpoint
 ```
 
@@ -632,7 +657,7 @@ oura-cf/
 ├── src/
 │   └── index.ts              # Main Worker + BackfillWorkflow (3,000+ lines)
 ├── test/
-│   └── index.spec.ts         # 56 tests
+│   └── index.spec.ts         # 57 tests
 ├── migrations/
 │   ├── 0001_init.sql         # Core tables
 │   ├── 0002_oauth_tokens.sql # OAuth token storage
@@ -645,7 +670,8 @@ oura-cf/
 │   ├── 0009_drop_unused_tables.sql # Drop unused tables
 │   └── 0010_drop_user_tags.sql # Drop superseded user_tags table
 ├── scripts/
-│   └── sync-version.sh       # Syncs version from package.json → wrangler.jsonc + vitest config
+│   ├── smoke-test.sh        # Post-deploy endpoint smoke test
+│   └── sync-version.sh      # Syncs version from package.json → wrangler.jsonc + vitest config
 ├── wrangler.jsonc            # Cloudflare configuration
 ├── wrangler.starter.jsonc    # Starter config for independent deployments
 ├── vitest.config.mts         # Test configuration
@@ -654,7 +680,8 @@ oura-cf/
 ├── grafana-dashboard-structured.json  # Grafana dashboard definition
 ├── CHANGELOG.md              # Version history
 ├── docs/
-│   └── architecture.mmd      # Mermaid architecture source
+│   ├── architecture.excalidraw  # Editable architecture diagram
+│   ├── architecture.svg         # Rendered architecture diagram
 │   ├── RUNBOOK.md            # Ops runbook (OAuth/webhook/queue incidents)
 │   ├── ENVIRONMENT.md        # Secrets, bindings, and Access path policy
 │   ├── RELEASE_CHECKLIST.md  # Release process and post-deploy checks

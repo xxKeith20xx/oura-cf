@@ -13,6 +13,7 @@ export default defineConfig({
 					OURA_CLIENT_SECRET: 'test-oura-client-secret',
 					OURA_WEBHOOK_VERIFICATION_TOKEN: 'test-webhook-verification-token',
 					OURA_WEBHOOK_CALLBACK_URL: 'https://example.com/webhook/oura',
+					ALLOWED_ORIGINS: 'https://test.example.com',
 				},
 			},
 		}),

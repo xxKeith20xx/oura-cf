@@ -15,6 +15,17 @@ Primary ingestion path is webhook-first (`/webhook/oura`) with Queue processing.
 - Keep admin routes protected by Access + `ADMIN_SECRET` bearer auth.
 - Do not commit secrets (`.dev.vars` is local-only).
 - Preserve schema compatibility unless doing an explicit migration.
+- No hardcoded domains or account-specific values in source code. Use `wrangler.jsonc` vars or env vars instead.
+- Do not add code comments unless explicitly asked.
+
+## AI Session Workflow
+
+- **Justify before implementing**: When suggesting changes, explain why it's worth doing and what the impact is. Do not start coding until the owner agrees.
+- **Be honest about what's not worth doing**: If a suggested fix has minimal impact for this single-user system, say so explicitly and recommend skipping it. Don't pad the list with low-value work.
+- **Deploy and verify incrementally**: Deploy after each logical batch of changes (not one at a time, not all at the end). Verify via live endpoint tests and/or observability after each deploy.
+- **Verify security fixes against production**: Unit tests are necessary but not sufficient. After deploying security fixes (SQL injection, auth bypass, etc.), test them against the live endpoint using `CF-Access-Client-Id`/`CF-Access-Client-Secret` headers from `.dev.vars`.
+- **Keep configs in sync**: When `wrangler.jsonc` changes structurally (new bindings, removed fields, new vars), update `wrangler.starter.jsonc` in the same change.
+- **Rank suggestions by severity**: Present findings as Critical / High / Medium / Low. Lead with what matters.
 
 ## Auth Model (Quick)
 
@@ -45,11 +56,21 @@ Primary ingestion path is webhook-first (`/webhook/oura`) with Queue processing.
 
 Optional: `OURA_WEBHOOK_SIGNING_SECRET`, `OURA_WEBHOOK_ALLOWED_SKEW_SECONDS`, `OURA_WEBHOOK_DATA_TYPES`, `OURA_WEBHOOK_EVENT_TYPES`.
 
+## Key Runtime Patterns
+
+- **Token refresh deduplication**: `getOuraAccessToken` uses a shared promise (`tokenRefreshPromise`) to prevent concurrent refresh calls from racing.
+- **Cron overlap protection**: `scheduled()` checks a `sync:cron_lock` KV key before starting; lock auto-expires after 2 hours.
+- **D1 batch chunking**: All `db.batch()` calls go through `batchInChunks()` which chunks into groups of 100 statements.
+- **SQL injection prevention**: `isReadOnlySql` strips SQLite identifier quotes (`"`, `` ` ``, `[`, `]`) before checking blocked table patterns.
+- **Incremental heart rate stats**: `updateTableStats` uses scalar MIN/MAX subqueries + delta count instead of full `COUNT(*)`.
+- **Webhook freshness tracking**: Logs `lagSeconds` (arrival time vs event timestamp) for each accepted webhook.
+
 ## Local/CI Commands
 
 - Lint: `npm run lint`
 - Tests: `npm run test:run`
-- Deploy (maintainer): `npm run deploy:cf`
+- Deploy: `npm run deploy:cf` (wrangler deploy only)
+- Migrate DB: `npm run db:migrate` (run separately when schema changes)
 
 ## Release Process
 

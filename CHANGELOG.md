@@ -5,6 +5,63 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2026-04-12
+
+### Security
+
+- **SQL injection via quoted identifiers**: `isReadOnlySql()` now strips `"`, `` ` ``, `[`, `]` before checking blocked table patterns, preventing bypass via `"oura_oauth_tokens"` etc.
+- **Error detail leakage removed**: 3 HTTP 500 responses no longer include `details: String(err)`; errors logged server-side only.
+- **CORS localhost defaults removed**: `DEFAULT_CORS_ORIGINS` is now empty `[]`; `ALLOWED_ORIGINS` must be set via `wrangler.jsonc` vars.
+- **Webhook replay window extended**: dedup TTL increased from 6h to 24h (`WEBHOOK_REPLAY_TTL_SECONDS`).
+- **OpenAPI domain allowlist**: `discoverOpenApiSpecUrl` only follows spec URLs on `cloud.ouraring.com`.
+- **XSS prevention on `/status`**: added `escapeHtml()` helper applied to all D1/KV values in the status template.
+- **`/status` Cache-Control**: changed from `public` to `private`, wrapped in `cors()` for security headers.
+
+### Fixed
+
+- **Concurrent token refresh race**: `getOuraAccessToken` uses a shared promise (`tokenRefreshPromise`) to prevent concurrent refresh calls from racing.
+- **Overlapping cron runs**: `scheduled()` checks a `sync:cron_lock` KV key before starting; lock auto-expires after 2 hours, cleared in `finally`.
+- **Cron retry threshold**: failure threshold lowered from >50% to any failure (>0), enabling retries for partial failures.
+- **`fetchWithRetry` body leak**: drains response body (`res.body?.cancel()`) before retry to avoid memory/connection leaks.
+- **Body size check**: uses actual `arrayBuffer()` length on cloned request, not just `Content-Length` header.
+- **`flushSqlCache` resilience**: batched deletes (100) with `Promise.allSettled` + failure logging instead of sequential.
+- **Webhook/backfill time drift**: Backfill Workflow uses `referenceNow` pinned at workflow start; `syncData` uses `syncStartTime` — both avoid drift on retries.
+- **`updateTableStats` error observability**: writes `stats:last_error` to KV on failure for debugging.
+
+### Added
+
+- **`GET /api/db/info`**: returns database file size and growth metrics from D1 query metadata.
+- **Incremental heart rate stats**: `updateTableStats` uses scalar MIN/MAX subqueries + delta count instead of full `COUNT(*)` on `heart_rate_samples`.
+- **Webhook delivery freshness tracking**: logs `lagSeconds` (arrival time vs event timestamp) for each accepted webhook.
+- **`batchInChunks()` helper**: all `db.batch()` calls chunked into groups of 100 statements.
+- **`KNOWN_ENDPOINTS` hoisted**: moved from inside `saveToD1` to module-level constant.
+
+### Changed
+
+- **`/api/daily_summaries`**: added `LIMIT ${DEFAULT_MAX_QUERY_ROWS}` to prevent unbounded result sets.
+- **`/api/stats`**: both D1 queries wrapped in `Promise.race` with 7s timeout.
+- **`ring_configuration` removed** from webhook subscription defaults (was being fetched and discarded).
+- **DLQ removed** from wrangler config; failed queue messages are silently dropped and covered by cron reconciliation.
+- **`deploy:cf` script simplified** to just `wrangler deploy`; `db:migrate` is a separate script.
+
+### Removed
+
+- **`ESLINT_GUIDE.md`**: generic AI-generated tutorial, not project-specific.
+- **`TESTING_GUIDE.md`**: generic AI-generated tutorial, not project-specific.
+- **`.github/BRANCH_PROTECTION.md`**: generic GitHub tutorial, not a workflow.
+- **`docs/architecture.mmd`**: superseded by `architecture.excalidraw` and `architecture.svg`.
+- **`scripts/optimize-db.sh`**: redundant with `npm run db:optimize`.
+- **`.ruff_cache/`**: Python linter cache in a TypeScript project.
+
+### Repository
+
+- **`wrangler.starter.jsonc`**: added setup instructions comment + `ALLOWED_ORIGINS` var placeholder.
+- **`.dev.vars.example`**: updated (removed `ring_configuration`, added CF Access vars, removed `CLOUDFLARE_ACCOUNT_ID`).
+- **`grafana-dashboard-structured.json`**: all 50+ URLs replaced with `https://YOUR_HOST` placeholder.
+- **`vitest.config.mts`**: uses `https://test.example.com` instead of hardcoded domain.
+- **`.gitattributes`**: removed `*.json binary` (was breaking diffs and GitHub language detection).
+- **`AGENTS.md`**: added "AI Session Workflow" section with justification-first, severity-ranked guidance.
+
 ## [2.0.3] - 2026-04-11
 
 ### Changed
@@ -469,6 +526,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Security review documentation
 - Performance optimization guides
 
+[2.1.0]: https://github.com/xxKeith20xx/oura-cf/compare/v2.0.3...v2.1.0
 [1.4.2]: https://github.com/xxKeith20xx/oura-cf/compare/v1.4.1...v1.4.2
 [1.4.1]: https://github.com/xxKeith20xx/oura-cf/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/xxKeith20xx/oura-cf/compare/v1.3.0...v1.4.0

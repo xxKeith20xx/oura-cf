@@ -23,7 +23,7 @@ export interface Env {
 	OURA_WEBHOOK_DATA_TYPES?: string;
 	OURA_WEBHOOK_EVENT_TYPES?: string;
 	BACKFILL_WORKFLOW: Workflow; // Workflows binding for durable backfill orchestration
-	ALLOWED_ORIGINS?: string; // Comma-separated CORS origins (default: https://oura.keith20.dev)
+	ALLOWED_ORIGINS?: string; // Comma-separated CORS origins (set via wrangler vars or ALLOWED_ORIGINS env)
 	MAX_QUERY_ROWS?: string; // Maximum rows to return from SQL queries (default: 50000)
 	QUERY_TIMEOUT_MS?: string; // Query timeout in milliseconds (default: 7000)
 	LOG_SQL_PREVIEW?: string; // Set to 'false' to disable SQL preview in logs/analytics
@@ -122,6 +122,11 @@ async function pseudonymizeForLogs(value: string): Promise<string> {
 	return `h:${hex.slice(0, 12)}`;
 }
 
+/** Escape untrusted values before interpolating into HTML to prevent stored XSS. */
+function escapeHtml(value: string): string {
+	return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
 function getSqlPreview(sql: string, enabled: boolean): string {
 	if (!enabled) return '[disabled]';
 	const compact = sql.replace(/\s+/g, ' ').trim();
@@ -134,6 +139,18 @@ function getSqlPreview(sql: string, enabled: boolean): string {
 
 // In-memory cache for OAuth tokens (reset on cold start)
 let tokenCache: { token: string; expiresAt: number } | null = null;
+let tokenRefreshPromise: Promise<string> | null = null;
+
+const D1_BATCH_CHUNK_SIZE = 100;
+
+async function batchInChunks(db: D1Database, stmts: D1PreparedStatement[]): Promise<D1Result<unknown>[]> {
+	const results: D1Result<unknown>[] = [];
+	for (let i = 0; i < stmts.length; i += D1_BATCH_CHUNK_SIZE) {
+		const chunk = stmts.slice(i, i + D1_BATCH_CHUNK_SIZE);
+		results.push(...(await db.batch(chunk)));
+	}
+	return results;
+}
 
 // Security: Constant-time token comparison to prevent timing attacks
 async function constantTimeCompare(a: string, b: string): Promise<boolean> {
@@ -178,16 +195,30 @@ async function hashSqlQuery(sql: string, params: unknown[]): Promise<string> {
 		.slice(0, 16);
 }
 
-// Cache: Flush all sql: prefixed KV entries after a data sync so dashboards see fresh data
+// Cache: Flush all sql: prefixed KV entries after a data sync so dashboards see fresh data.
+// Deletes are batched to stay within KV write-rate limits and use allSettled so individual
+// failures don't abort the entire flush.
 async function flushSqlCache(kv: KVNamespace): Promise<number> {
 	let deleted = 0;
+	let failed = 0;
 	let cursor: string | undefined;
+	const BATCH_SIZE = 100;
 	do {
 		const list = await kv.list({ prefix: 'sql:', limit: 1000, cursor });
-		await Promise.all(list.keys.map((k) => kv.delete(k.name)));
-		deleted += list.keys.length;
+		// Process deletes in batches to avoid KV rate-limit bursts
+		for (let i = 0; i < list.keys.length; i += BATCH_SIZE) {
+			const batch = list.keys.slice(i, i + BATCH_SIZE);
+			const results = await Promise.allSettled(batch.map((k) => kv.delete(k.name)));
+			for (const r of results) {
+				if (r.status === 'fulfilled') deleted++;
+				else failed++;
+			}
+		}
 		cursor = list.list_complete ? undefined : list.cursor;
 	} while (cursor);
+	if (failed > 0) {
+		console.warn('flushSqlCache: some deletes failed', { deleted, failed });
+	}
 	return deleted;
 }
 
@@ -302,8 +333,8 @@ const MAX_PARAMS = 100; // Maximum SQL parameters
 const MAX_BODY_SIZE = 1_048_576; // 1MB max request body size
 const SYNC_SCHEDULE_DISPLAY = 'Every 2 hours (0 */2 * * * UTC)';
 const SYNC_RESOURCE_CONCURRENCY = 4; // Parallel resources per sync run
-const DEFAULT_CORS_ORIGINS = ['https://oura.keith20.dev', 'http://localhost:3000', 'http://localhost:8787'];
-const WEBHOOK_REPLAY_TTL_SECONDS = 6 * 3600;
+const DEFAULT_CORS_ORIGINS: string[] = [];
+const WEBHOOK_REPLAY_TTL_SECONDS = 24 * 3600; // 24 hours — must exceed Queue max retry window + DLQ re-delivery
 const WEBHOOK_MAX_CLOCK_SKEW_SECONDS_DEFAULT = 300;
 const OURA_WEBHOOK_EVENT_TYPES_DEFAULT: OuraWebhookEventType[] = ['create', 'update', 'delete'];
 const OURA_WEBHOOK_DATA_TYPES_DEFAULT: OuraWebhookDataType[] = [
@@ -317,7 +348,6 @@ const OURA_WEBHOOK_DATA_TYPES_DEFAULT: OuraWebhookDataType[] = [
 	'daily_spo2',
 	'sleep_time',
 	'rest_mode_period',
-	'ring_configuration',
 	'daily_stress',
 	'daily_cardiovascular_age',
 	'daily_resilience',
@@ -665,13 +695,21 @@ async function mapWithConcurrency<T, R>(
 export default {
 	// 1. Cron Trigger: Automated Daily Sync
 	async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext) {
+		if (env.OURA_CACHE) {
+			const lockValue = await env.OURA_CACHE.get('sync:cron_lock');
+			if (lockValue) {
+				console.warn('Cron sync skipped: previous sync still running', { lockValue });
+				return;
+			}
+			await env.OURA_CACHE.put('sync:cron_lock', new Date().toISOString(), { expirationTtl: 7200 });
+		}
+
 		ctx.waitUntil(
 			retryWithBackoff(
 				async () => {
 					const syncStart = Date.now();
 					await syncData(env, 3, 0, null);
 					await updateTableStats(env);
-					// Record successful sync metadata for /health and /status endpoints
 					if (env.OURA_CACHE) {
 						try {
 							await env.OURA_CACHE.put(
@@ -681,28 +719,32 @@ export default {
 									trigger: controller.cron,
 									durationMs: Date.now() - syncStart,
 								}),
-								{ expirationTtl: 86400 * 7 }, // Keep for 7 days
+								{ expirationTtl: 86400 * 7 },
 							);
 						} catch {
-							// Non-fatal
+							/* non-fatal KV write */
 						}
 					}
 				},
 				{ maxRetries: 3, baseDelay: 5000, maxDelay: 60000 },
-			).then(async () => {
-				// Flush cached query results so dashboards see fresh data immediately.
-				// Isolated from retry: a KV failure here should not re-trigger data sync.
-				if (env.OURA_CACHE) {
-					try {
-						const flushed = await flushSqlCache(env.OURA_CACHE);
-						console.log('SQL cache flushed after cron sync', { entriesFlushed: flushed });
-					} catch (err) {
-						console.warn('Cache flush failed after cron sync (non-fatal)', {
-							error: err instanceof Error ? err.message : String(err),
-						});
+			)
+				.then(async () => {
+					if (env.OURA_CACHE) {
+						try {
+							const flushed = await flushSqlCache(env.OURA_CACHE);
+							console.log('SQL cache flushed after cron sync', { entriesFlushed: flushed });
+						} catch (err) {
+							console.warn('Cache flush failed after cron sync (non-fatal)', {
+								error: err instanceof Error ? err.message : String(err),
+							});
+						}
 					}
-				}
-			}),
+				})
+				.finally(async () => {
+					if (env.OURA_CACHE) {
+						await env.OURA_CACHE.delete('sync:cron_lock');
+					}
+				}),
 		);
 		// Clean up expired OAuth states (abandoned flows)
 		ctx.waitUntil(
@@ -735,10 +777,19 @@ export default {
 			);
 		}
 
-		// Security: Check request body size for POST/PUT requests
+		// Security: Check request body size for POST/PUT requests.
+		// We check the actual body length (not just Content-Length header) to handle
+		// chunked transfers and falsified headers. The body is cloned so downstream
+		// handlers can still consume the original request.
 		if (request.method === 'POST' || request.method === 'PUT') {
+			// Fast path: reject obviously oversized requests via Content-Length header
 			const contentLength = request.headers.get('Content-Length');
 			if (contentLength && parseInt(contentLength, 10) > MAX_BODY_SIZE) {
+				return cors(Response.json({ error: 'Request body too large (max 1MB)' }, { status: 413 }));
+			}
+			// Reliable path: verify actual body size (handles chunked/missing Content-Length)
+			const bodyBuffer = await request.clone().arrayBuffer();
+			if (bodyBuffer.byteLength > MAX_BODY_SIZE) {
 				return cors(Response.json({ error: 'Request body too large (max 1MB)' }, { status: 413 }));
 			}
 		}
@@ -958,6 +1009,16 @@ export default {
 					await env.OURA_CACHE.put(replayKey, '1', { expirationTtl: WEBHOOK_REPLAY_TTL_SECONDS });
 					await env.OURA_WEBHOOK_QUEUE.send(payload);
 					accepted++;
+
+					const eventDate = new Date(payload.eventTime);
+					if (Number.isFinite(eventDate.getTime())) {
+						const lagSeconds = Math.round((Date.now() - eventDate.getTime()) / 1000);
+						console.log('Webhook delivery freshness', {
+							dataType: payload.dataType,
+							eventType: payload.eventType,
+							lagSeconds,
+						});
+					}
 				}
 
 				return cors(Response.json({ accepted, duplicate, ignored }, { status: 202 }));
@@ -1291,6 +1352,38 @@ export default {
 			}
 		}
 
+		// Admin: D1 database introspection — file size, per-table row counts, index stats.
+		// Intended for Grafana monitoring of database growth trends.
+		if (url.pathname === '/api/admin/db/stats') {
+			if (authRole !== 'admin') {
+				return cors(Response.json({ error: 'Forbidden: admin token required' }, { status: 403 }));
+			}
+			try {
+				// table_stats gives pre-computed row counts; sqlite_master gives index inventory.
+				// file_size comes from D1 meta on any query result.
+				const [tableStats, indexList] = await Promise.all([
+					env.oura_db.prepare('SELECT resource, record_count, min_day, max_day, updated_at FROM table_stats ORDER BY resource').all(),
+					env.oura_db.prepare("SELECT tbl, idx, stat FROM sqlite_stat1 WHERE tbl NOT LIKE '_cf_%' ORDER BY tbl, idx").all(),
+				]);
+
+				const fileSizeBytes = tableStats.meta?.size_after ?? null;
+
+				return cors(
+					Response.json({
+						database: {
+							file_size_bytes: fileSizeBytes,
+							file_size_mb: fileSizeBytes ? Math.round((fileSizeBytes / 1048576) * 100) / 100 : null,
+						},
+						tables: tableStats.results,
+						indexes: indexList.results,
+					}),
+				);
+			} catch (err) {
+				console.error('DB stats query failed', { error: err instanceof Error ? err.message : String(err) });
+				return cors(Response.json({ error: 'Failed to fetch DB stats' }, { status: 500 }));
+			}
+		}
+
 		if (url.pathname === '/api/daily_summaries') {
 			const start = url.searchParams.get('start');
 			const end = url.searchParams.get('end');
@@ -1322,7 +1415,7 @@ export default {
 
 			const whereSql = `WHERE ${where.join(' AND ')}`;
 			try {
-				const stmt = env.oura_db.prepare(`SELECT * FROM daily_summaries ${whereSql} ORDER BY day ASC`);
+				const stmt = env.oura_db.prepare(`SELECT * FROM daily_summaries ${whereSql} ORDER BY day ASC LIMIT ${DEFAULT_MAX_QUERY_ROWS}`);
 				const out = args.length ? await stmt.bind(...args).all() : await stmt.all();
 				return cors(
 					new Response(JSON.stringify(out.results), {
@@ -1334,7 +1427,8 @@ export default {
 					}),
 				);
 			} catch (err) {
-				return cors(Response.json({ error: 'D1 query failed', details: String(err).slice(0, 500) }, { status: 500 }));
+				console.error('daily_summaries query failed', { error: err instanceof Error ? err.message : String(err) });
+				return cors(Response.json({ error: 'D1 query failed' }, { status: 500 }));
 			}
 		}
 
@@ -1540,13 +1634,37 @@ export default {
 			return cors(Response.json({ error: 'Method Not Allowed' }, { status: 405 }));
 		}
 
+		// Lightweight D1 database size endpoint for Grafana monitoring.
+		// Runs a trivial query to capture D1 meta.size_after without scanning data.
+		if (url.pathname === '/api/db/info') {
+			try {
+				const probe = await env.oura_db.prepare('SELECT 1').all();
+				const fileSizeBytes = probe.meta?.size_after ?? null;
+				const totalRows = await env.oura_db
+					.prepare('SELECT SUM(record_count) AS total_records FROM table_stats')
+					.first<{ total_records: number }>();
+				return cors(
+					Response.json({
+						file_size_bytes: fileSizeBytes,
+						file_size_mb: fileSizeBytes ? Math.round((fileSizeBytes / 1048576) * 100) / 100 : null,
+						total_records: totalRows?.total_records ?? null,
+					}),
+				);
+			} catch (err) {
+				console.error('DB info query failed', { error: err instanceof Error ? err.message : String(err) });
+				return cors(Response.json({ error: 'Failed to fetch DB info' }, { status: 500 }));
+			}
+		}
+
 		// Dedicated endpoint for table statistics (fast, approximate counts)
 		if (url.pathname === '/api/stats') {
 			try {
 				// Use pre-computed stats table if available (most accurate)
-				const { results: cachedStats } = await env.oura_db
-					.prepare('SELECT resource, min_day, max_day, record_count, updated_at FROM table_stats ORDER BY resource')
-					.all();
+				const statsTimeout = DEFAULT_QUERY_TIMEOUT_MS;
+				const { results: cachedStats } = await Promise.race([
+					env.oura_db.prepare('SELECT resource, min_day, max_day, record_count, updated_at FROM table_stats ORDER BY resource').all(),
+					new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Stats query timed out')), statsTimeout)),
+				]);
 
 				if (cachedStats && cachedStats.length > 0) {
 					return cors(
@@ -1563,9 +1681,10 @@ export default {
 				// This will only run if table_stats is empty (first time)
 				console.warn('table_stats empty, computing on-demand (slow)');
 
-				const stats = await env.oura_db
-					.prepare(
-						`
+				const stats = await Promise.race([
+					env.oura_db
+						.prepare(
+							`
 				SELECT 'daily_summaries' AS resource, MIN(day) AS min_day, MAX(day) AS max_day, COUNT(*) AS record_count FROM daily_summaries
 				UNION ALL
 				SELECT 'sleep_episodes', MIN(day), MAX(day), COUNT(*) FROM sleep_episodes
@@ -1578,8 +1697,10 @@ export default {
 				UNION ALL
 				SELECT 'rest_mode_periods', MIN(start_day), MAX(start_day), COUNT(*) FROM rest_mode_periods
 			`,
-					)
-					.all();
+						)
+						.all(),
+					new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Stats fallback query timed out')), statsTimeout)),
+				]);
 
 				// Truncate datetime values to date-only (YYYY-MM-DD) for tables that store full timestamps
 				const truncatedResults = (
@@ -1599,7 +1720,8 @@ export default {
 					}),
 				);
 			} catch (err) {
-				return cors(Response.json({ error: 'Failed to fetch table stats', details: String(err).slice(0, 500) }, { status: 500 }));
+				console.error('Stats query failed', { error: err instanceof Error ? err.message : String(err) });
+				return cors(Response.json({ error: 'Failed to fetch table stats' }, { status: 500 }));
 			}
 		}
 
@@ -1623,7 +1745,8 @@ export default {
 					}),
 				);
 			} catch (err) {
-				return cors(Response.json({ error: 'D1 query failed', details: String(err).slice(0, 500) }, { status: 500 }));
+				console.error('Root endpoint query failed', { error: err instanceof Error ? err.message : String(err) });
+				return cors(Response.json({ error: 'D1 query failed' }, { status: 500 }));
 			}
 		}
 
@@ -1651,7 +1774,7 @@ export default {
 					? stats
 							.map(
 								(r) =>
-									`\t\t\t<tr><td>${r.resource}</td><td>${r.record_count?.toLocaleString() ?? '—'}</td><td>${r.max_day ?? '—'}</td></tr>`,
+									`\t\t\t<tr><td>${escapeHtml(String(r.resource))}</td><td>${escapeHtml(r.record_count?.toLocaleString() ?? '—')}</td><td>${escapeHtml(r.max_day ?? '—')}</td></tr>`,
 							)
 							.join('\n')
 					: '\t\t\t<tr><td colspan="3"><em>No stats available — run a sync first</em></td></tr>';
@@ -1678,7 +1801,7 @@ export default {
 	<h1>💍 Oura Data Pipeline</h1>
 	<p>
 		Status: <span class="badge ${isHealthy ? 'ok' : 'unknown'}">${isHealthy ? 'Operational' : 'Unknown'}</span>
-		${lastSyncTime ? `&nbsp;&nbsp;Last sync: ${lastSyncAgo !== null ? `${lastSyncAgo}m ago` : lastSyncTime}` : '&nbsp;&nbsp;No sync recorded yet'}
+		${lastSyncTime ? `&nbsp;&nbsp;Last sync: ${lastSyncAgo !== null ? `${lastSyncAgo}m ago` : escapeHtml(lastSyncTime)}` : '&nbsp;&nbsp;No sync recorded yet'}
 	</p>
 	<table>
 		<thead><tr><th>Table</th><th>Records</th><th>Latest Day</th></tr></thead>
@@ -1690,12 +1813,14 @@ ${tableRows}
 </body>
 </html>`;
 
-				return new Response(html, {
-					headers: {
-						'Content-Type': 'text/html; charset=utf-8',
-						'Cache-Control': 'public, max-age=300',
-					},
-				});
+				return cors(
+					new Response(html, {
+						headers: {
+							'Content-Type': 'text/html; charset=utf-8',
+							'Cache-Control': 'private, max-age=300',
+						},
+					}),
+				);
 			} catch (err) {
 				return new Response('Status page error', { status: 500 });
 			}
@@ -1810,8 +1935,8 @@ async function syncData(env: Env, totalDays: number, offsetDays = 0, resourceFil
 			// Process time windows sequentially per resource to avoid pagination issues
 			for (let i = 0; i < totalDays; i += chunkDays) {
 				const windowDays = Math.min(chunkDays, totalDays - i);
-				const start = new Date(Date.now() - (offsetDays + i + windowDays) * 86400000).toISOString().split('T')[0];
-				const end = new Date(Date.now() - (offsetDays + i) * 86400000).toISOString().split('T')[0];
+				const start = new Date(syncStartTime - (offsetDays + i + windowDays) * 86400000).toISOString().split('T')[0];
+				const end = new Date(syncStartTime - (offsetDays + i) * 86400000).toISOString().split('T')[0];
 				await ingestResource(env, r, { startDate: start, endDate: end });
 				requestCount++;
 			}
@@ -1854,8 +1979,11 @@ async function syncData(env: Env, totalDays: number, offsetDays = 0, resourceFil
 		});
 	}
 
-	// Throw if majority of resources failed so retryWithBackoff can actually retry
-	if (resources.length > 0 && failed > resources.length / 2) {
+	// Throw if any resource failed so retryWithBackoff can retry the sync pass.
+	// Individual resource failures may be transient (Oura API blips); a retry
+	// that succeeds for the previously-failed resources costs very little because
+	// successfully-synced resources short-circuit via date overlap / ON CONFLICT.
+	if (failed > 0) {
 		throw new Error(`Sync failed: ${failed}/${resources.length} resources failed (${failedResources.join(', ')})`);
 	}
 }
@@ -1906,26 +2034,28 @@ const RESOURCE_ALIASES: Record<string, string> = {
 	vO2_max: 'vo2_max',
 };
 
+/** Oura resource endpoints that have corresponding D1 table mappings. */
+const KNOWN_ENDPOINTS = new Set([
+	'daily_readiness',
+	'daily_sleep',
+	'daily_activity',
+	'daily_stress',
+	'daily_resilience',
+	'daily_spo2',
+	'daily_cardiovascular_age',
+	'vo2_max',
+	'sleep',
+	'heartrate',
+	'workout',
+	'session',
+	'enhanced_tag',
+	'rest_mode_period',
+	'sleep_time',
+]);
+
 async function saveToD1(env: Env, endpoint: string, data: JsonRecord[]) {
 	// Normalize endpoint name to handle API version renames
 	const normalizedEndpoint = RESOURCE_ALIASES[endpoint] ?? endpoint;
-	const KNOWN_ENDPOINTS = new Set([
-		'daily_readiness',
-		'daily_sleep',
-		'daily_activity',
-		'daily_stress',
-		'daily_resilience',
-		'daily_spo2',
-		'daily_cardiovascular_age',
-		'vo2_max',
-		'sleep',
-		'heartrate',
-		'workout',
-		'session',
-		'enhanced_tag',
-		'rest_mode_period',
-		'sleep_time',
-	]);
 
 	// daily_readiness -> daily_summaries (readiness fields)
 	if (normalizedEndpoint === 'daily_readiness') {
@@ -1962,7 +2092,7 @@ async function saveToD1(env: Env, endpoint: string, data: JsonRecord[]) {
 				),
 			);
 		}
-		if (stmts.length) await env.oura_db.batch(stmts);
+		if (stmts.length) await batchInChunks(env.oura_db, stmts);
 	}
 
 	// daily_sleep -> daily_summaries (sleep fields)
@@ -1998,7 +2128,7 @@ async function saveToD1(env: Env, endpoint: string, data: JsonRecord[]) {
 				),
 			);
 		}
-		if (stmts.length) await env.oura_db.batch(stmts);
+		if (stmts.length) await batchInChunks(env.oura_db, stmts);
 	}
 
 	// daily_activity -> daily_summaries (activity fields)
@@ -2038,7 +2168,7 @@ async function saveToD1(env: Env, endpoint: string, data: JsonRecord[]) {
 				),
 			);
 		}
-		if (stmts.length) await env.oura_db.batch(stmts);
+		if (stmts.length) await batchInChunks(env.oura_db, stmts);
 	}
 
 	// daily_stress -> daily_summaries (stress_index)
@@ -2054,7 +2184,7 @@ async function saveToD1(env: Env, endpoint: string, data: JsonRecord[]) {
 		for (const d of data) {
 			stmts.push(stmt.bind(d.day, toInt(d.stress_high ?? d.day_summary)));
 		}
-		if (stmts.length) await env.oura_db.batch(stmts);
+		if (stmts.length) await batchInChunks(env.oura_db, stmts);
 	}
 
 	// daily_resilience -> daily_summaries (resilience fields)
@@ -2073,7 +2203,7 @@ async function saveToD1(env: Env, endpoint: string, data: JsonRecord[]) {
 			const c = toJsonRecord(d.contributors);
 			stmts.push(stmt.bind(d.day, d.level ?? null, toInt(c.sleep_recovery), toInt(c.daytime_recovery)));
 		}
-		if (stmts.length) await env.oura_db.batch(stmts);
+		if (stmts.length) await batchInChunks(env.oura_db, stmts);
 	}
 
 	// daily_spo2 -> daily_summaries (spo2 fields)
@@ -2091,7 +2221,7 @@ async function saveToD1(env: Env, endpoint: string, data: JsonRecord[]) {
 			const spo2 = toJsonRecord(d.spo2_percentage);
 			stmts.push(stmt.bind(d.day, toReal(spo2.average), toInt(d.breathing_disturbance_index)));
 		}
-		if (stmts.length) await env.oura_db.batch(stmts);
+		if (stmts.length) await batchInChunks(env.oura_db, stmts);
 	}
 
 	// daily_cardiovascular_age -> daily_summaries (cv_age_offset)
@@ -2107,7 +2237,7 @@ async function saveToD1(env: Env, endpoint: string, data: JsonRecord[]) {
 		for (const d of data) {
 			stmts.push(stmt.bind(d.day, toInt(d.vascular_age)));
 		}
-		if (stmts.length) await env.oura_db.batch(stmts);
+		if (stmts.length) await batchInChunks(env.oura_db, stmts);
 	}
 
 	// vo2_max -> daily_summaries (vo2_max)
@@ -2125,7 +2255,7 @@ async function saveToD1(env: Env, endpoint: string, data: JsonRecord[]) {
 		for (const d of data) {
 			stmts.push(stmt.bind(d.day, toReal(d.vo2_max)));
 		}
-		if (stmts.length) await env.oura_db.batch(stmts);
+		if (stmts.length) await batchInChunks(env.oura_db, stmts);
 	}
 
 	// sleep -> sleep_episodes
@@ -2170,7 +2300,7 @@ async function saveToD1(env: Env, endpoint: string, data: JsonRecord[]) {
 				),
 			);
 		}
-		if (stmts.length) await env.oura_db.batch(stmts);
+		if (stmts.length) await batchInChunks(env.oura_db, stmts);
 	}
 
 	// heartrate -> heart_rate_samples
@@ -2180,21 +2310,15 @@ async function saveToD1(env: Env, endpoint: string, data: JsonRecord[]) {
 				'ON CONFLICT(timestamp) DO UPDATE SET bpm=excluded.bpm, source=excluded.source',
 		);
 
-		// Process in batches to reduce memory usage (heart rate can have 10k+ samples)
-		const BATCH_SIZE = 500;
-		for (let i = 0; i < data.length; i += BATCH_SIZE) {
-			const batch = data.slice(i, i + BATCH_SIZE);
-			const stmts = [];
+		const stmts = [];
+		for (const d of data) {
+			const timestamp = typeof d?.timestamp === 'string' ? d.timestamp : null;
+			if (!timestamp) continue;
+			stmts.push(stmt.bind(timestamp, toInt(d.bpm), d.source ?? null));
+		}
 
-			for (const d of batch) {
-				const timestamp = typeof d?.timestamp === 'string' ? d.timestamp : null;
-				if (!timestamp) continue;
-				stmts.push(stmt.bind(timestamp, toInt(d.bpm), d.source ?? null));
-			}
-
-			if (stmts.length) {
-				await env.oura_db.batch(stmts);
-			}
+		if (stmts.length) {
+			await batchInChunks(env.oura_db, stmts);
 		}
 		return;
 	}
@@ -2228,7 +2352,7 @@ async function saveToD1(env: Env, endpoint: string, data: JsonRecord[]) {
 				),
 			);
 		}
-		if (stmts.length) await env.oura_db.batch(stmts);
+		if (stmts.length) await batchInChunks(env.oura_db, stmts);
 	}
 
 	// session -> activity_logs (meditation/breathing sessions)
@@ -2250,7 +2374,7 @@ async function saveToD1(env: Env, endpoint: string, data: JsonRecord[]) {
 				stmt.bind(d.id, d.start_datetime ?? null, d.end_datetime ?? null, d.type ?? null, toReal(heartRate.average), d.mood ?? null),
 			);
 		}
-		if (stmts.length) await env.oura_db.batch(stmts);
+		if (stmts.length) await batchInChunks(env.oura_db, stmts);
 	}
 
 	// enhanced_tag -> enhanced_tags (richer tag model with duration + custom names)
@@ -2282,7 +2406,7 @@ async function saveToD1(env: Env, endpoint: string, data: JsonRecord[]) {
 				),
 			);
 		}
-		if (stmts.length) await env.oura_db.batch(stmts);
+		if (stmts.length) await batchInChunks(env.oura_db, stmts);
 	}
 
 	// rest_mode_period -> rest_mode_periods
@@ -2302,7 +2426,7 @@ async function saveToD1(env: Env, endpoint: string, data: JsonRecord[]) {
 			const episodesJson = Array.isArray(d.episodes) ? JSON.stringify(d.episodes) : null;
 			stmts.push(stmt.bind(d.id, d.start_day ?? null, d.end_day ?? null, d.start_time ?? null, d.end_time ?? null, episodesJson));
 		}
-		if (stmts.length) await env.oura_db.batch(stmts);
+		if (stmts.length) await batchInChunks(env.oura_db, stmts);
 	}
 
 	// sleep_time -> daily_summaries (sleep timing recommendation columns)
@@ -2325,7 +2449,7 @@ async function saveToD1(env: Env, endpoint: string, data: JsonRecord[]) {
 					: (d.optimal_bedtime ?? null);
 			stmts.push(stmt.bind(d.day, bedtime, d.recommendation ?? null, d.status ?? null));
 		}
-		if (stmts.length) await env.oura_db.batch(stmts);
+		if (stmts.length) await batchInChunks(env.oura_db, stmts);
 	}
 
 	// Warn if a new Oura API endpoint was discovered but has no D1 handler
@@ -2447,6 +2571,8 @@ async function fetchWithRetry(input: RequestInfo | URL, init: RequestInit, maxRe
 		if (res.status !== 429 && res.status < 500) return res;
 		attempt += 1;
 		if (attempt > maxRetries) return res;
+		// Drain the body to release the underlying connection before retrying
+		await res.body?.cancel();
 		// Respect Retry-After from API (seconds integer); fall back to exponential backoff
 		const retryAfter = res.headers.get('Retry-After');
 		const backoffMs =
@@ -2472,6 +2598,19 @@ async function discoverOpenApiSpecUrl(): Promise<string> {
 		if (match?.[1]) {
 			const specPath = match[1];
 			const specUrl = specPath.startsWith('http') ? specPath : `https://cloud.ouraring.com${specPath}`;
+			// Validate the discovered URL points to Oura's domain to prevent
+			// fetching attacker-controlled content if the docs page is compromised.
+			const ALLOWED_HOSTS = ['cloud.ouraring.com'];
+			try {
+				const parsed = new URL(specUrl);
+				if (!ALLOWED_HOSTS.includes(parsed.hostname)) {
+					console.warn('Discovered spec URL has unexpected host, using fallback', { specUrl, hostname: parsed.hostname });
+					return OURA_OPENAPI_FALLBACK_URL;
+				}
+			} catch {
+				console.warn('Discovered spec URL is malformed, using fallback', { specUrl });
+				return OURA_OPENAPI_FALLBACK_URL;
+			}
 			console.log('Discovered OpenAPI spec URL from docs page', { specUrl });
 			return specUrl;
 		}
@@ -2588,11 +2727,14 @@ function isReadOnlySql(sql: string): boolean {
 	// No multiple statements
 	if (normalized.includes(';')) return false;
 
+	// Strip SQLite identifier quoting (double quotes, backticks, square brackets)
+	// so that e.g. "oura_oauth_tokens" or `oura_oauth_states` are still blocked.
+	const unquoted = normalized.replace(/["`[\]]/g, '');
+
 	// Block access to sensitive tables using safe static regex patterns
-	// Use word boundaries to prevent substring matches while avoiding dynamic regex
-	const blockedTablePatterns = [/\boura_oauth_tokens\b/i, /\boura_oauth_states\b/i];
+	const blockedTablePatterns = [/\boura_oauth_tokens\b/, /\boura_oauth_states\b/];
 	for (const pattern of blockedTablePatterns) {
-		if (pattern.test(normalized)) {
+		if (pattern.test(unquoted)) {
 			return false;
 		}
 	}
@@ -2776,18 +2918,27 @@ async function getOuraAccessToken(env: Env): Promise<string> {
 	}
 
 	if (refreshToken) {
-		const refreshed = await refreshAccessToken(env, refreshToken);
-		if (!refreshed.refresh_token || typeof refreshed.refresh_token !== 'string') {
-			throw new Error('Token refresh response missing refresh_token. Re-authorize via /oauth/start.');
+		if (tokenRefreshPromise) {
+			return tokenRefreshPromise;
 		}
-		await upsertOauthToken(env, userId, refreshed);
-		// Cache the refreshed token
-		const newExpiresAt =
-			typeof refreshed.expires_in === 'number' && Number.isFinite(refreshed.expires_in)
-				? Date.now() + Math.max(0, refreshed.expires_in - 60) * 1000
-				: Date.now() + 3600000;
-		tokenCache = { token: refreshed.access_token, expiresAt: newExpiresAt };
-		return refreshed.access_token;
+		tokenRefreshPromise = (async () => {
+			try {
+				const refreshed = await refreshAccessToken(env, refreshToken);
+				if (!refreshed.refresh_token || typeof refreshed.refresh_token !== 'string') {
+					throw new Error('Token refresh response missing refresh_token. Re-authorize via /oauth/start.');
+				}
+				await upsertOauthToken(env, userId, refreshed);
+				const newExpiresAt =
+					typeof refreshed.expires_in === 'number' && Number.isFinite(refreshed.expires_in)
+						? Date.now() + Math.max(0, refreshed.expires_in - 60) * 1000
+						: Date.now() + 3600000;
+				tokenCache = { token: refreshed.access_token, expiresAt: newExpiresAt };
+				return refreshed.access_token;
+			} finally {
+				tokenRefreshPromise = null;
+			}
+		})();
+		return tokenRefreshPromise;
 	}
 
 	throw new Error('No OAuth refresh token found. Visit /oauth/start to authorize.');
@@ -2836,7 +2987,11 @@ async function updateTableStats(env: Env, { force = false }: { force?: boolean }
 			}
 		}
 
-		// Compute stats for each table (this is expensive but runs once per sync)
+		// Compute stats for each table.
+		// Small tables use COUNT(*) directly. For heart_rate_samples (~1M rows),
+		// we avoid a full table scan by reading the previous count from table_stats
+		// and only counting rows added since the last recorded max_day. On forced
+		// refreshes (backfill) or first run, we fall back to COUNT(*).
 		const stats = [
 			{
 				resource: 'daily_summaries',
@@ -2845,11 +3000,6 @@ async function updateTableStats(env: Env, { force = false }: { force?: boolean }
 			{
 				resource: 'sleep_episodes',
 				query: `SELECT 'sleep_episodes' AS resource, MIN(day) AS min_day, MAX(day) AS max_day, COUNT(*) AS record_count FROM sleep_episodes`,
-			},
-			{
-				resource: 'heart_rate_samples',
-				// Use bare MIN/MAX on PK column for O(1) index lookup instead of substr() which forces full table scan
-				query: `SELECT 'heart_rate_samples' AS resource, MIN(timestamp) AS min_day, MAX(timestamp) AS max_day, COUNT(*) AS record_count FROM heart_rate_samples`,
 			},
 			{
 				resource: 'activity_logs',
@@ -2865,6 +3015,29 @@ async function updateTableStats(env: Env, { force = false }: { force?: boolean }
 				query: `SELECT 'rest_mode_periods' AS resource, MIN(start_day) AS min_day, MAX(start_day) AS max_day, COUNT(*) AS record_count FROM rest_mode_periods`,
 			},
 		];
+
+		// heart_rate_samples: use incremental count when possible to avoid ~1M row scan.
+		// On forced refresh or first run, fall back to full COUNT(*).
+		let hrQuery: string;
+		if (force) {
+			// Full scan on forced refresh (backfill) — ensures an accurate baseline
+			hrQuery = `SELECT 'heart_rate_samples' AS resource, MIN(timestamp) AS min_day, MAX(timestamp) AS max_day, COUNT(*) AS record_count FROM heart_rate_samples`;
+		} else {
+			// Incremental: use scalar subqueries for O(1) MIN/MAX index lookups, and
+			// derive record_count from the previous value + new rows since last max_day.
+			// COALESCE handles first-run (no table_stats row yet) by falling back to COUNT(*).
+			// This reads ~1K rows instead of ~1M on a typical cron refresh.
+			hrQuery = `SELECT 'heart_rate_samples' AS resource,
+				(SELECT MIN(timestamp) FROM heart_rate_samples) AS min_day,
+				(SELECT MAX(timestamp) FROM heart_rate_samples) AS max_day,
+				COALESCE(
+					(SELECT record_count FROM table_stats WHERE resource = 'heart_rate_samples')
+						+ (SELECT COUNT(*) FROM heart_rate_samples WHERE timestamp > COALESCE(
+							(SELECT max_day FROM table_stats WHERE resource = 'heart_rate_samples'), '')),
+					(SELECT COUNT(*) FROM heart_rate_samples)
+				) AS record_count`;
+		}
+		stats.push({ resource: 'heart_rate_samples', query: hrQuery });
 
 		// Run all stat queries in parallel (they are independent reads)
 		const settled = await Promise.allSettled(
@@ -2909,7 +3082,7 @@ async function updateTableStats(env: Env, { force = false }: { force?: boolean }
 		}
 
 		if (updateStatements.length) {
-			await env.oura_db.batch(updateStatements);
+			await batchInChunks(env.oura_db, updateStatements);
 		}
 
 		// Record the update timestamp so future cron ticks can skip the refresh
@@ -2927,9 +3100,20 @@ async function updateTableStats(env: Env, { force = false }: { force?: boolean }
 			tables_updated: updateStatements.length,
 		});
 	} catch (err) {
-		console.error('Failed to update table stats', {
-			error: err instanceof Error ? err.message : String(err),
-		});
+		const errorMsg = err instanceof Error ? err.message : String(err);
+		console.error('Failed to update table stats', { error: errorMsg });
+		// Persist failure for observability — /health and /status can surface this
+		if (env.OURA_CACHE) {
+			try {
+				await env.OURA_CACHE.put(
+					'stats:last_error',
+					JSON.stringify({ error: errorMsg, timestamp: new Date().toISOString() }),
+					{ expirationTtl: 86400 }, // 24h TTL — auto-clears if stats recover
+				);
+			} catch {
+				// Non-fatal — best-effort error tracking
+			}
+		}
 	}
 }
 
@@ -2954,6 +3138,10 @@ type BackfillResourceResult = {
 export class BackfillWorkflow extends WorkflowEntrypoint<Env, BackfillParams> {
 	override async run(event: WorkflowEvent<BackfillParams>, step: WorkflowStep) {
 		const { totalDays, offsetDays, resources: resourceNames } = event.payload;
+
+		// Pin a reference timestamp at workflow start so retried steps compute
+		// consistent date windows instead of drifting with Date.now().
+		const referenceNow = Date.now();
 
 		// Step 1: Discover available resources from Oura OpenAPI spec
 		const allResources = await step.do(
@@ -3012,8 +3200,8 @@ export class BackfillWorkflow extends WorkflowEntrypoint<Env, BackfillParams> {
 
 						for (let i = 0; i < totalDays; i += chunkDays) {
 							const windowDays = Math.min(chunkDays, totalDays - i);
-							const start = new Date(Date.now() - (offsetDays + i + windowDays) * 86400000).toISOString().split('T')[0];
-							const end = new Date(Date.now() - (offsetDays + i) * 86400000).toISOString().split('T')[0];
+							const start = new Date(referenceNow - (offsetDays + i + windowDays) * 86400000).toISOString().split('T')[0];
+							const end = new Date(referenceNow - (offsetDays + i) * 86400000).toISOString().split('T')[0];
 							await ingestResource(this.env, r, { startDate: start, endDate: end });
 							requestCount++;
 						}

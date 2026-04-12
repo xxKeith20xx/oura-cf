@@ -1,3 +1,8 @@
+// Starter config for independent deployments.
+// 1. Copy this file to wrangler.local.jsonc
+// 2. Replace <YOUR_*> placeholders with your Cloudflare resource IDs
+// 3. Update "vars" → "ALLOWED_ORIGINS" with your domain
+// 4. Deploy: npx wrangler deploy --config wrangler.local.jsonc
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "oura-cf",
@@ -6,6 +11,9 @@
 	"compatibility_flags": ["nodejs_compat"],
 	"define": {
 		"__APP_VERSION__": "\"2.0.3\"",
+	},
+	"vars": {
+		"ALLOWED_ORIGINS": "https://your-domain.example.com",
 	},
 	"workers_dev": true,
 	"triggers": {
@@ -51,7 +59,6 @@
 				"max_batch_size": 10,
 				"max_batch_timeout": 5,
 				"max_retries": 8,
-				"dead_letter_queue": "oura-webhook-events-dlq",
 			},
 		],
 	},

@@ -8,6 +8,9 @@
 	"define": {
 		"__APP_VERSION__": "\"2.0.3\"",
 	},
+	"vars": {
+		"ALLOWED_ORIGINS": "https://oura.keith20.dev",
+	},
 	"workers_dev": false,
 	"triggers": {
 		"crons": ["0 */2 * * *"],
@@ -51,7 +54,6 @@
 				"max_batch_size": 10,
 				"max_batch_timeout": 5,
 				"max_retries": 8,
-				"dead_letter_queue": "oura-webhook-events-dlq",
 			},
 		],
 	},

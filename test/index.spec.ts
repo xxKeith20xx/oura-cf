@@ -185,7 +185,7 @@ describe('CORS', () => {
 		// CORS header reflects origin or is '*'
 		const corsHeader = response.headers.get('Access-Control-Allow-Origin');
 		expect(corsHeader).toBeTruthy();
-		expect(['*', 'https://example.com', 'https://oura.keith20.dev']).toContain(corsHeader);
+		expect(['*', 'https://example.com', 'https://test.example.com']).toContain(corsHeader);
 	});
 });
 
@@ -304,6 +304,21 @@ describe('SQL Injection Prevention (isReadOnlySql)', () => {
 
 	it('blocks access to oura_oauth_tokens', async () => {
 		const response = await sqlQuery('SELECT * FROM oura_oauth_tokens');
+		expect(response.status).toBe(400);
+	});
+
+	it('blocks access to oura_oauth_tokens with double-quoted identifier', async () => {
+		const response = await sqlQuery('SELECT * FROM "oura_oauth_tokens"');
+		expect(response.status).toBe(400);
+	});
+
+	it('blocks access to oura_oauth_tokens with backtick-quoted identifier', async () => {
+		const response = await sqlQuery('SELECT * FROM `oura_oauth_tokens`');
+		expect(response.status).toBe(400);
+	});
+
+	it('blocks access to oura_oauth_tokens with bracket-quoted identifier', async () => {
+		const response = await sqlQuery('SELECT * FROM [oura_oauth_tokens]');
 		expect(response.status).toBe(400);
 	});
 
@@ -446,9 +461,9 @@ describe('/api/daily_summaries', () => {
 describe('CORS Origin Validation', () => {
 	it('reflects allowed origin back', async () => {
 		const response = await SELF.fetch('https://example.com/health', {
-			headers: { Origin: 'https://oura.keith20.dev' },
+			headers: { Origin: 'https://test.example.com' },
 		});
-		expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://oura.keith20.dev');
+		expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://test.example.com');
 	});
 
 	it('falls back to default origin for disallowed origins', async () => {
@@ -458,7 +473,7 @@ describe('CORS Origin Validation', () => {
 		// Should NOT reflect the attacker's origin
 		const corsOrigin = response.headers.get('Access-Control-Allow-Origin');
 		expect(corsOrigin).not.toBe('https://evil.com');
-		expect(corsOrigin).toBe('https://oura.keith20.dev');
+		expect(corsOrigin).toBe('https://test.example.com');
 	});
 });
 
