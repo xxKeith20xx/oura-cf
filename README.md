@@ -118,7 +118,7 @@ Oura Ring ──> Oura Cloud API
 
 **Backfill** (manual, durable): Admin triggers via `/backfill`. Uses Cloudflare Workflows for durable, step-by-step execution where each resource sync is independently retryable.
 
-**Query path**: Grafana uses the Infinity datasource to `POST /api/sql` with raw SQL. The handler authenticates the Bearer token, validates the SQL is read-only, checks the KV cache (6h TTL), executes against D1 with a 7s timeout and 50K row cap, then caches the result.
+**Query path**: Grafana uses the Infinity datasource to `POST /api/sql` with raw SQL. The handler authenticates the Bearer token, validates the SQL is read-only, rejects overly large `UNION ALL` compound queries (>5 terms), checks the KV cache (6h TTL), executes against D1 with a 7s timeout and 50K row cap, then caches the result.
 
 ### Infrastructure Patterns
 
@@ -129,7 +129,7 @@ Oura Ring ──> Oura Cloud API
 | **Circuit breaker**           | Opens after 5 consecutive Oura API failures, half-opens after 5 min, resets on success.                                                       |
 | **Token refresh dedup**       | Shared promise prevents concurrent OAuth refresh calls from racing.                                                                           |
 | **Cron overlap protection**   | KV key `sync:cron_lock` with 2h TTL; deleted in `finally`.                                                                                    |
-| **SQL injection prevention**  | `isReadOnlySql()` strips identifier quotes, blocks writes/DDL/PRAGMA/sensitive tables.                                                        |
+| **SQL injection prevention**  | `isReadOnlySql()` strips identifier quotes, blocks writes/DDL/PRAGMA/sensitive tables, and caps `UNION ALL` compounds at 5 terms.             |
 | **Webhook replay protection** | KV-seen keys with 24h TTL prevent duplicate processing.                                                                                       |
 | **Cache invalidation**        | `flushSqlCache()` wipes all `sql:` KV keys after any data write (cron, webhook, backfill).                                                    |
 | **D1 batch chunking**         | `batchInChunks()` splits statements into groups of 100.                                                                                       |
@@ -649,6 +649,7 @@ ORDER BY day
 - **Read-only enforcement**: Blocks INSERT, UPDATE, DELETE, DROP, ALTER, PRAGMA, VACUUM, ATTACH, REPLACE INTO
 - **Sensitive table filtering**: Queries against `oura_oauth_tokens` and `oura_oauth_states` are blocked (including quoted identifier variants like `"oura_oauth_tokens"`)
 - **Comment stripping**: Removes `--` and `/* */` comments before validation
+- **Compound SELECT guardrail**: Rejects queries with more than 5 `UNION ALL` terms before they hit D1 limits
 - **Multi-statement blocking**: Rejects queries containing semicolons
 - **Leading wildcard blocking**: Rejects `LIKE '%...'` patterns that force full table scans
 - **LIMIT capping**: Injects/caps LIMIT to prevent unbounded result sets
@@ -696,7 +697,7 @@ The project uses Vitest with `@cloudflare/vitest-pool-workers` for testing again
 npm test          # Watch mode
 npm run test:run  # Single run
 
-# 57 tests (55 passing, 2 skipped)
+# 62 tests (60 passing, 2 skipped)
 # Coverage: auth, SQL injection (including quoted identifier bypass), param validation, LIMIT capping,
 #           CORS origins, daily_summaries, 404 handling, root endpoint
 ```

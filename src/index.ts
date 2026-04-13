@@ -331,6 +331,7 @@ const MIN_QUERY_TIMEOUT_MS = 1_000; // Clamp to avoid invalid low/negative value
 const MAX_QUERY_TIMEOUT_MS = 15_000; // Clamp to avoid excessively long-running queries
 const MAX_PARAMS = 100; // Maximum SQL parameters
 const MAX_BODY_SIZE = 1_048_576; // 1MB max request body size
+const MAX_COMPOUND_SELECT_TERMS = 5;
 const SYNC_SCHEDULE_DISPLAY = 'Every 2 hours (0 */2 * * * UTC)';
 const SYNC_RESOURCE_CONCURRENCY = 4; // Parallel resources per sync run
 const DEFAULT_CORS_ORIGINS: string[] = [];
@@ -1458,6 +1459,28 @@ export default {
 					return cors(Response.json({ error: 'Only read-only SQL queries are allowed' }, { status: 400 }));
 				}
 
+				const compoundSelectTerms = countUnionAllCompoundTerms(sql);
+				if (compoundSelectTerms > MAX_COMPOUND_SELECT_TERMS) {
+					await logSqlQuery(
+						request,
+						sql,
+						params,
+						Date.now() - queryStartTime,
+						0,
+						env,
+						`Query blocked: too many UNION ALL terms (${compoundSelectTerms})`,
+					);
+					return cors(
+						Response.json(
+							{
+								error: 'Query uses too many UNION ALL terms',
+								hint: `Maximum ${MAX_COMPOUND_SELECT_TERMS} UNION ALL terms allowed. Split into smaller queries or use CTE/VALUES.`,
+							},
+							{ status: 400 },
+						),
+					);
+				}
+
 				// Validation: Parameter count limit
 				if (params.length > MAX_PARAMS) {
 					return cors(Response.json({ error: `Too many parameters (max ${MAX_PARAMS})` }, { status: 400 }));
@@ -1682,29 +1705,68 @@ export default {
 				console.warn('table_stats empty, computing on-demand (slow)');
 
 				const stats = await Promise.race([
-					env.oura_db
-						.prepare(
-							`
-				SELECT 'daily_summaries' AS resource, MIN(day) AS min_day, MAX(day) AS max_day, COUNT(*) AS record_count FROM daily_summaries
-				UNION ALL
-				SELECT 'sleep_episodes', MIN(day), MAX(day), COUNT(*) FROM sleep_episodes
-				UNION ALL
-				SELECT 'heart_rate_samples', MIN(timestamp), MAX(timestamp), COUNT(*) FROM heart_rate_samples
-				UNION ALL
-				SELECT 'activity_logs', MIN(start_datetime), MAX(start_datetime), COUNT(*) FROM activity_logs
-				UNION ALL
-				SELECT 'enhanced_tags', MIN(start_day), MAX(start_day), COUNT(*) FROM enhanced_tags
-				UNION ALL
-				SELECT 'rest_mode_periods', MIN(start_day), MAX(start_day), COUNT(*) FROM rest_mode_periods
-			`,
-						)
-						.all(),
+					Promise.all([
+						env.oura_db
+							.prepare('SELECT MIN(day) AS min_day, MAX(day) AS max_day, COUNT(*) AS record_count FROM daily_summaries')
+							.first<{ min_day: string | null; max_day: string | null; record_count: number }>()
+							.then((row) => ({
+								resource: 'daily_summaries',
+								min_day: row?.min_day ?? null,
+								max_day: row?.max_day ?? null,
+								record_count: row?.record_count ?? 0,
+							})),
+						env.oura_db
+							.prepare('SELECT MIN(day) AS min_day, MAX(day) AS max_day, COUNT(*) AS record_count FROM sleep_episodes')
+							.first<{ min_day: string | null; max_day: string | null; record_count: number }>()
+							.then((row) => ({
+								resource: 'sleep_episodes',
+								min_day: row?.min_day ?? null,
+								max_day: row?.max_day ?? null,
+								record_count: row?.record_count ?? 0,
+							})),
+						env.oura_db
+							.prepare('SELECT MIN(timestamp) AS min_day, MAX(timestamp) AS max_day, COUNT(*) AS record_count FROM heart_rate_samples')
+							.first<{ min_day: string | null; max_day: string | null; record_count: number }>()
+							.then((row) => ({
+								resource: 'heart_rate_samples',
+								min_day: row?.min_day ?? null,
+								max_day: row?.max_day ?? null,
+								record_count: row?.record_count ?? 0,
+							})),
+						env.oura_db
+							.prepare('SELECT MIN(start_datetime) AS min_day, MAX(start_datetime) AS max_day, COUNT(*) AS record_count FROM activity_logs')
+							.first<{ min_day: string | null; max_day: string | null; record_count: number }>()
+							.then((row) => ({
+								resource: 'activity_logs',
+								min_day: row?.min_day ?? null,
+								max_day: row?.max_day ?? null,
+								record_count: row?.record_count ?? 0,
+							})),
+						env.oura_db
+							.prepare('SELECT MIN(start_day) AS min_day, MAX(start_day) AS max_day, COUNT(*) AS record_count FROM enhanced_tags')
+							.first<{ min_day: string | null; max_day: string | null; record_count: number }>()
+							.then((row) => ({
+								resource: 'enhanced_tags',
+								min_day: row?.min_day ?? null,
+								max_day: row?.max_day ?? null,
+								record_count: row?.record_count ?? 0,
+							})),
+						env.oura_db
+							.prepare('SELECT MIN(start_day) AS min_day, MAX(start_day) AS max_day, COUNT(*) AS record_count FROM rest_mode_periods')
+							.first<{ min_day: string | null; max_day: string | null; record_count: number }>()
+							.then((row) => ({
+								resource: 'rest_mode_periods',
+								min_day: row?.min_day ?? null,
+								max_day: row?.max_day ?? null,
+								record_count: row?.record_count ?? 0,
+							})),
+					]),
 					new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Stats fallback query timed out')), statsTimeout)),
 				]);
 
 				// Truncate datetime values to date-only (YYYY-MM-DD) for tables that store full timestamps
 				const truncatedResults = (
-					stats.results as Array<{ resource: string; min_day: string | null; max_day: string | null; record_count: number }>
+					stats as Array<{ resource: string; min_day: string | null; max_day: string | null; record_count: number }>
 				).map((row) => ({
 					...row,
 					min_day: row.min_day?.substring(0, 10) ?? null,
@@ -2715,6 +2777,106 @@ async function loadOuraResourcesFromOpenApi(env: Env): Promise<OuraResource[]> {
 	}
 
 	return out;
+}
+
+function stripSqlCommentsAndStringLiterals(sql: string): string {
+	let out = '';
+	let i = 0;
+	let mode: 'normal' | 'single' | 'double' | 'backtick' | 'lineComment' | 'blockComment' = 'normal';
+
+	while (i < sql.length) {
+		const ch = sql[i];
+		const next = i + 1 < sql.length ? sql[i + 1] : '';
+
+		if (mode === 'normal') {
+			if (ch === '-' && next === '-') {
+				mode = 'lineComment';
+				i += 2;
+				continue;
+			}
+			if (ch === '/' && next === '*') {
+				mode = 'blockComment';
+				i += 2;
+				continue;
+			}
+			if (ch === "'") {
+				mode = 'single';
+				i += 1;
+				continue;
+			}
+			if (ch === '"') {
+				mode = 'double';
+				i += 1;
+				continue;
+			}
+			if (ch === '`') {
+				mode = 'backtick';
+				i += 1;
+				continue;
+			}
+			out += ch;
+			i += 1;
+			continue;
+		}
+
+		if (mode === 'single') {
+			if (ch === "'" && next === "'") {
+				i += 2;
+				continue;
+			}
+			if (ch === "'") {
+				mode = 'normal';
+			}
+			i += 1;
+			continue;
+		}
+
+		if (mode === 'double') {
+			if (ch === '"' && next === '"') {
+				i += 2;
+				continue;
+			}
+			if (ch === '"') {
+				mode = 'normal';
+			}
+			i += 1;
+			continue;
+		}
+
+		if (mode === 'backtick') {
+			if (ch === '`') {
+				mode = 'normal';
+			}
+			i += 1;
+			continue;
+		}
+
+		if (mode === 'lineComment') {
+			if (ch === '\n') {
+				mode = 'normal';
+				out += '\n';
+			}
+			i += 1;
+			continue;
+		}
+
+		if (mode === 'blockComment') {
+			if (ch === '*' && next === '/') {
+				mode = 'normal';
+				i += 2;
+				continue;
+			}
+			i += 1;
+		}
+	}
+
+	return out;
+}
+
+function countUnionAllCompoundTerms(sql: string): number {
+	const normalized = stripSqlCommentsAndStringLiterals(sql).toLowerCase();
+	const unionAllCount = normalized.match(/\bunion\s+all\b/g)?.length ?? 0;
+	return unionAllCount === 0 ? 0 : unionAllCount + 1;
 }
 
 function isReadOnlySql(sql: string): boolean {

@@ -365,6 +365,25 @@ describe('SQL Injection Prevention (isReadOnlySql)', () => {
 		const response = await sqlQuery("REPLACE INTO daily_summaries (day) VALUES ('2099-01-01')");
 		expect(response.status).toBe(400);
 	});
+
+	it('allows UNION ALL up to five terms', async () => {
+		const response = await sqlQuery('SELECT 1 AS n UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5');
+		expect(response.status).toBe(200);
+	});
+
+	it('blocks UNION ALL over five terms', async () => {
+		const response = await sqlQuery(
+			'SELECT 1 AS n UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5 UNION ALL SELECT 6',
+		);
+		expect(response.status).toBe(400);
+		const data = (await response.json()) as any;
+		expect(data.error).toContain('too many UNION ALL terms');
+	});
+
+	it('ignores UNION ALL inside string literals', async () => {
+		const response = await sqlQuery("SELECT 'UNION ALL UNION ALL UNION ALL UNION ALL UNION ALL UNION ALL' AS marker");
+		expect(response.status).toBe(200);
+	});
 });
 
 describe('SQL Parameter Validation', () => {

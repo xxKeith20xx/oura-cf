@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.2] - 2026-04-13
+
+### Fixed
+
+- **D1 compound SELECT errors in `/api/stats` fallback**: replaced the multi-table `UNION ALL` fallback with parallel per-table aggregates, avoiding D1 term limits while preserving the same response shape.
+- **Grafana `Rows Ingested (24h)` query fragility**: replaced chained `UNION ALL` with a `WITH ... VALUES (...)` query shape to keep panel output stable without relying on compound-select chains.
+
+### Security
+
+- **`/api/sql` UNION guardrail**: added a pre-execution limit of 5 `UNION ALL` terms with a clear 400 response and hint, preventing avoidable D1 runtime failures and reducing observability noise.
+
+### Added
+
+- **UNION guard tests**: added coverage for allowed 5-term compounds, blocked 6-term compounds, and ignored `UNION ALL` inside SQL string literals.
+
+### Repository
+
+- **Docs refresh**: updated `README.md` and `AGENTS.md` to document the compound-select guardrail and current SQL safety behavior.
+
 ## [2.1.1] - 2026-04-12
 
 ### Fixed

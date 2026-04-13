@@ -8456,7 +8456,7 @@
 											"url_options": {
 												"body_content_type": "application/json",
 												"body_type": "raw",
-												"data": "{\"sql\": \"SELECT 'daily_summaries' AS table_name, COUNT(*) AS rows_24h FROM daily_summaries WHERE day >= date('now', '-1 day') UNION ALL SELECT 'sleep_episodes' AS table_name, COUNT(*) AS rows_24h FROM sleep_episodes WHERE day >= date('now', '-1 day') UNION ALL SELECT 'activity_logs' AS table_name, COUNT(*) AS rows_24h FROM activity_logs WHERE start_datetime >= datetime('now', '-1 day') UNION ALL SELECT 'heart_rate_samples' AS table_name, COUNT(*) AS rows_24h FROM heart_rate_samples WHERE timestamp >= datetime('now', '-1 day') UNION ALL SELECT 'enhanced_tags' AS table_name, COUNT(*) AS rows_24h FROM enhanced_tags WHERE start_day >= date('now', '-1 day')\", \"params\": []}",
+												"data": "{\"sql\": \"WITH rows_24h(table_name, rows_24h) AS (VALUES ('daily_summaries', (SELECT COUNT(*) FROM daily_summaries WHERE day >= date('now', '-1 day'))), ('sleep_episodes', (SELECT COUNT(*) FROM sleep_episodes WHERE day >= date('now', '-1 day'))), ('activity_logs', (SELECT COUNT(*) FROM activity_logs WHERE start_datetime >= datetime('now', '-1 day'))), ('heart_rate_samples', (SELECT COUNT(*) FROM heart_rate_samples WHERE timestamp >= datetime('now', '-1 day'))), ('enhanced_tags', (SELECT COUNT(*) FROM enhanced_tags WHERE start_day >= date('now', '-1 day')))) SELECT table_name, rows_24h FROM rows_24h\", \"params\": []}",
 												"method": "POST"
 											}
 										},

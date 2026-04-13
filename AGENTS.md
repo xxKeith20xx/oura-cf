@@ -62,6 +62,7 @@ Optional: `OURA_WEBHOOK_SIGNING_SECRET`, `OURA_WEBHOOK_ALLOWED_SKEW_SECONDS`, `O
 - **Cron overlap protection**: `scheduled()` checks a `sync:cron_lock` KV key before starting; lock auto-expires after 2 hours.
 - **D1 batch chunking**: All `db.batch()` calls go through `batchInChunks()` which chunks into groups of 100 statements.
 - **SQL injection prevention**: `isReadOnlySql` strips SQLite identifier quotes (`"`, `` ` ``, `[`, `]`) before checking blocked table patterns.
+- **Compound SELECT guardrail**: `/api/sql` rejects queries with more than 5 `UNION ALL` terms to avoid D1 compound-select limits and noisy runtime errors.
 - **Incremental heart rate stats**: `updateTableStats` uses scalar MIN/MAX subqueries + delta count instead of full `COUNT(*)`.
 - **Webhook freshness tracking**: Logs `lagSeconds` (arrival time vs event timestamp) for each accepted webhook.
 
