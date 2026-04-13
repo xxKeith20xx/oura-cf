@@ -10,7 +10,7 @@
 	"compatibility_date": "2026-02-24",
 	"compatibility_flags": ["nodejs_compat"],
 	"define": {
-		"__APP_VERSION__": "\"2.1.1\"",
+		"__APP_VERSION__": "\"2.1.2\"",
 	},
 	"vars": {
 		"ALLOWED_ORIGINS": "https://your-domain.example.com",
