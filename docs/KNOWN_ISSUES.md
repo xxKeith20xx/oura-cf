@@ -1,10 +1,5 @@
 # KNOWN ISSUES
 
-## Webhook delete events
-
-- Current queue processor acks `delete` webhook events without deleting historical rows from D1.
-- Impact: deleted upstream records may remain visible unless overwritten by later sync patterns.
-
 ## OAuth re-consent is manual
 
 - If OAuth token state is revoked/broken, a human must re-run `/oauth/start` and approve consent.

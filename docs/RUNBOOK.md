@@ -5,6 +5,7 @@ Operational runbook for `oura-cf`.
 ## Daily Checks
 
 - Verify `/health` is `ok`.
+- Verify authenticated `/health` or `/status` shows recent webhook acceptance and queue processing timestamps.
 - Verify Grafana panels load and recent timestamps advance.
 - Spot-check webhook subscription count via `/api/admin/oura/webhooks`.
 
@@ -47,7 +48,7 @@ Recovery:
 2. Ensure Access is not applied to `/webhook/oura`.
 3. Add/adjust WAF allow/bypass for webhook path if needed.
 
-## 4) Queue backlog / DLQ growth
+## 4) Queue backlog / retry growth
 
 Symptoms:
 
@@ -55,7 +56,7 @@ Symptoms:
 
 Recovery:
 
-1. Check queue and DLQ depth.
+1. Check queue depth and retry activity.
 2. Inspect worker logs for repeated fetch/token errors.
 3. Fix root cause, then replay/reprocess as needed.
 

@@ -6,7 +6,7 @@
 	"compatibility_date": "2026-02-24",
 	"compatibility_flags": ["nodejs_compat"],
 	"define": {
-		"__APP_VERSION__": "\"2.1.2\"",
+		"__APP_VERSION__": "\"2.1.3\"",
 	},
 	"vars": {
 		"ALLOWED_ORIGINS": "https://oura.keith20.dev",

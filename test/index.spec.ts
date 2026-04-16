@@ -4,6 +4,22 @@ import worker from '../src/index';
 import { version as APP_VERSION } from '../package.json';
 
 const AUTH_HEADER = { Authorization: 'Bearer test-grafana-secret' };
+const ADMIN_HEADER = { Authorization: 'Bearer test-admin-secret' };
+let uniqueIpCounter = 0;
+
+function nextTestIp(): string {
+	uniqueIpCounter += 1;
+	return `198.51.100.${uniqueIpCounter}`;
+}
+
+async function healthRequest(headers: Record<string, string> = {}) {
+	return SELF.fetch('https://example.com/health', {
+		headers: {
+			'CF-Connecting-IP': nextTestIp(),
+			...headers,
+		},
+	});
+}
 
 // Helper: POST to /api/sql with auth
 async function sqlQuery(sql: string, params: unknown[] = []) {
@@ -29,6 +45,14 @@ beforeAll(async () => {
 		db.prepare(`CREATE TABLE IF NOT EXISTS daily_summaries (
 			day DATE PRIMARY KEY,
 			readiness_score INTEGER,
+			readiness_activity_balance INTEGER,
+			readiness_body_temperature INTEGER,
+			readiness_hrv_balance INTEGER,
+			readiness_previous_day_activity INTEGER,
+			readiness_previous_night_sleep INTEGER,
+			readiness_recovery_index INTEGER,
+			readiness_resting_heart_rate INTEGER,
+			readiness_sleep_balance INTEGER,
 			sleep_score INTEGER,
 			sleep_deep_sleep INTEGER,
 			sleep_efficiency INTEGER,
@@ -39,10 +63,40 @@ beforeAll(async () => {
 			sleep_total_sleep INTEGER,
 			activity_score INTEGER,
 			activity_steps INTEGER,
+			activity_active_calories INTEGER,
+			activity_total_calories INTEGER,
+			activity_meet_daily_targets INTEGER,
+			activity_move_every_hour INTEGER,
+			activity_recovery_time INTEGER,
+			activity_stay_active INTEGER,
+			activity_training_frequency INTEGER,
+			activity_training_volume INTEGER,
+			stress_index INTEGER,
+			resilience_level TEXT,
+			resilience_contributors_sleep INTEGER,
+			resilience_contributors_stress INTEGER,
+			spo2_percentage REAL,
+			spo2_breathing_disturbance_index INTEGER,
+			cv_age_offset INTEGER,
+			vo2_max REAL,
+			sleep_time_optimal_bedtime TEXT,
+			sleep_time_recommendation TEXT,
+			sleep_time_status TEXT,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`),
 		db.prepare(`CREATE TABLE IF NOT EXISTS heart_rate_samples (timestamp DATETIME PRIMARY KEY, bpm INTEGER, source TEXT)`),
-		db.prepare(`CREATE TABLE IF NOT EXISTS sleep_episodes (id TEXT PRIMARY KEY, day DATE, type TEXT)`),
+		db.prepare(
+			`CREATE TABLE IF NOT EXISTS sleep_episodes (id TEXT PRIMARY KEY, day DATE, start_datetime DATETIME, end_datetime DATETIME, type TEXT, heart_rate_avg REAL, heart_rate_lowest REAL, hrv_avg REAL, breath_avg REAL, temperature_deviation REAL, deep_duration INTEGER, rem_duration INTEGER, light_duration INTEGER, awake_duration INTEGER)`,
+		),
+		db.prepare(
+			`CREATE TABLE IF NOT EXISTS activity_logs (id TEXT PRIMARY KEY, type TEXT, start_datetime DATETIME, end_datetime DATETIME, activity_label TEXT, intensity TEXT, calories REAL, distance REAL, hr_avg REAL, mood TEXT)`,
+		),
+		db.prepare(
+			`CREATE TABLE IF NOT EXISTS enhanced_tags (id TEXT PRIMARY KEY, start_day DATE NOT NULL, end_day DATE, start_time TEXT, end_time TEXT, tag_type_code TEXT, custom_name TEXT, comment TEXT)`,
+		),
+		db.prepare(
+			`CREATE TABLE IF NOT EXISTS rest_mode_periods (id TEXT PRIMARY KEY, start_day DATE NOT NULL, end_day DATE, start_time TEXT, end_time TEXT, episodes_json TEXT)`,
+		),
 		db.prepare(
 			`CREATE TABLE IF NOT EXISTS oura_oauth_tokens (user_id TEXT PRIMARY KEY, access_token TEXT, refresh_token TEXT, expires_at INTEGER)`,
 		),
@@ -64,9 +118,28 @@ beforeAll(async () => {
 	]);
 });
 
+beforeEach(async () => {
+	const db = (env as any).oura_db as D1Database;
+	const cache = (env as any).OURA_CACHE as KVNamespace;
+	await Promise.all([
+		cache.delete('sync:last_success'),
+		cache.delete('webhook:last_accepted'),
+		cache.delete('queue:last_success'),
+		cache.delete('queue:last_error'),
+		cache.delete('stats:last_error'),
+	]);
+	await db.batch([
+		db.prepare("DELETE FROM daily_summaries WHERE day IN ('2026-03-03', '2026-03-04')"),
+		db.prepare("DELETE FROM sleep_episodes WHERE id IN ('sleep-delete-1')"),
+		db.prepare("DELETE FROM activity_logs WHERE id IN ('activity-delete-1')"),
+		db.prepare("DELETE FROM enhanced_tags WHERE id IN ('enhanced-delete-1')"),
+		db.prepare("DELETE FROM rest_mode_periods WHERE id IN ('rest-delete-1')"),
+	]);
+});
+
 describe('Health Endpoint', () => {
 	it('responds with ok status (integration style)', async () => {
-		const response = await SELF.fetch('https://example.com/health');
+		const response = await healthRequest();
 		expect(response.status).toBe(200);
 
 		const data = (await response.json()) as any;
@@ -108,6 +181,51 @@ describe('Health Endpoint', () => {
 		expect(data.request).toBeDefined();
 		expect(data.request.method).toBe('GET');
 		expect(data.request.url).toBe('https://example.com/health');
+	});
+
+	it('returns webhook, queue, and error signals for authenticated callers', async () => {
+		const cache = (env as any).OURA_CACHE as KVNamespace;
+		await Promise.all([
+			cache.put('sync:last_success', JSON.stringify({ timestamp: '2026-03-03T12:00:00.000Z' })),
+			cache.put('webhook:last_accepted', JSON.stringify({ timestamp: '2026-03-03T12:05:00.000Z', accepted: 2 })),
+			cache.put('queue:last_success', JSON.stringify({ timestamp: '2026-03-03T12:06:00.000Z', dataType: 'daily_sleep' })),
+			cache.put('queue:last_error', JSON.stringify({ timestamp: '2026-03-03T12:07:00.000Z', error: 'queue failure' })),
+			cache.put('stats:last_error', JSON.stringify({ timestamp: '2026-03-03T12:08:00.000Z', error: 'stats failure' })),
+		]);
+
+		const response = await healthRequest(AUTH_HEADER);
+		expect(response.status).toBe(200);
+
+		const data = (await response.json()) as any;
+		expect(data.lastSync?.timestamp).toBe('2026-03-03T12:00:00.000Z');
+		expect(data.pipeline?.mode?.primary).toBe('webhook_queue');
+		expect(data.pipeline?.mode?.reconciliation).toBe('cron_sync');
+		expect(data.pipeline?.primaryPath?.label).toBe('Webhook + Queue');
+		expect(data.pipeline?.reconciliationPath?.label).toBe('Cron Reconciliation');
+		expect(data.pipeline?.webhook?.lastAccepted?.accepted).toBe(2);
+		expect(data.pipeline?.queue?.lastSuccess?.dataType).toBe('daily_sleep');
+		expect(data.pipeline?.queue?.lastError?.error).toBe('queue failure');
+		expect(data.pipeline?.errors?.stats?.error).toBe('stats failure');
+	});
+
+	it('marks the pipeline stale when all freshness signals are old', async () => {
+		const cache = (env as any).OURA_CACHE as KVNamespace;
+		await Promise.all([
+			cache.put('sync:last_success', JSON.stringify({ timestamp: '2026-03-01T00:00:00.000Z' })),
+			cache.put('webhook:last_accepted', JSON.stringify({ timestamp: '2026-03-01T00:00:00.000Z' })),
+			cache.put('queue:last_success', JSON.stringify({ timestamp: '2026-03-01T00:00:00.000Z' })),
+		]);
+
+		const response = await healthRequest(AUTH_HEADER);
+		expect(response.status).toBe(200);
+
+		const data = (await response.json()) as any;
+		expect(data.pipeline?.status).toBe('Stale');
+		expect(data.pipeline?.primaryPath?.status).toBe('Stale');
+		expect(data.pipeline?.reconciliationPath?.status).toBe('Stale');
+		expect(data.pipeline?.sync?.freshness?.state).toBe('stale');
+		expect(data.pipeline?.webhook?.freshness?.state).toBe('stale');
+		expect(data.pipeline?.queue?.freshness?.state).toBe('stale');
 	});
 });
 
@@ -177,11 +295,7 @@ describe('CORS', () => {
 	});
 
 	it('includes CORS headers in response', async () => {
-		const response = await SELF.fetch('https://example.com/health', {
-			headers: {
-				Origin: 'https://example.com',
-			},
-		});
+		const response = await healthRequest({ Origin: 'https://example.com' });
 
 		// CORS header reflects origin or is '*'
 		const corsHeader = response.headers.get('Access-Control-Allow-Origin');
@@ -610,6 +724,106 @@ describe('Webhook Queue Processing', () => {
 
 		vi.unstubAllGlobals();
 	});
+
+	it('clears only daily_sleep fields for delete events', async () => {
+		const db = (env as any).oura_db as D1Database;
+		await db
+			.prepare(
+				`INSERT OR REPLACE INTO daily_summaries (day, readiness_score, sleep_score, sleep_total_sleep, activity_score) VALUES (?, ?, ?, ?, ?)`,
+			)
+			.bind('2026-03-03', 77, 88, 450, 66)
+			.run();
+
+		const batch = createMessageBatch('oura-webhook-events', [
+			{
+				id: 'msg-delete-daily',
+				timestamp: new Date(),
+				attempts: 1,
+				body: {
+					eventType: 'delete',
+					dataType: 'daily_sleep',
+					objectId: '2026-03-03',
+					eventTime: new Date().toISOString(),
+					userId: 'user-test',
+				},
+			},
+		]);
+
+		const ctx = createExecutionContext();
+		await worker.queue(batch, env, ctx);
+		const result = await getQueueResult(batch, ctx);
+		expect(result.explicitAcks).toContain('msg-delete-daily');
+		expect(result.retryMessages).toStrictEqual([]);
+
+		const check = await db
+			.prepare('SELECT readiness_score, sleep_score, sleep_total_sleep, activity_score FROM daily_summaries WHERE day = ?')
+			.bind('2026-03-03')
+			.first<any>();
+		expect(check?.readiness_score).toBe(77);
+		expect(check?.activity_score).toBe(66);
+		expect(check?.sleep_score).toBeNull();
+		expect(check?.sleep_total_sleep).toBeNull();
+	});
+
+	it('deletes id-keyed rows for sleep delete events', async () => {
+		const db = (env as any).oura_db as D1Database;
+		await db
+			.prepare('INSERT OR REPLACE INTO sleep_episodes (id, day, type) VALUES (?, ?, ?)')
+			.bind('sleep-delete-1', '2026-03-04', 'long_sleep')
+			.run();
+
+		const batch = createMessageBatch('oura-webhook-events', [
+			{
+				id: 'msg-delete-sleep',
+				timestamp: new Date(),
+				attempts: 1,
+				body: {
+					eventType: 'delete',
+					dataType: 'sleep',
+					objectId: 'sleep-delete-1',
+					eventTime: new Date().toISOString(),
+					userId: 'user-test',
+				},
+			},
+		]);
+
+		const ctx = createExecutionContext();
+		await worker.queue(batch, env, ctx);
+		const result = await getQueueResult(batch, ctx);
+		expect(result.explicitAcks).toContain('msg-delete-sleep');
+
+		const check = await db.prepare('SELECT id FROM sleep_episodes WHERE id = ?').bind('sleep-delete-1').first<any>();
+		expect(check).toBeNull();
+	});
+});
+
+describe('/status', () => {
+	it('renders webhook and queue freshness plus current errors', async () => {
+		const cache = (env as any).OURA_CACHE as KVNamespace;
+		await Promise.all([
+			cache.put('sync:last_success', JSON.stringify({ timestamp: '2026-03-03T12:00:00.000Z' })),
+			cache.put('webhook:last_accepted', JSON.stringify({ timestamp: '2026-03-03T12:05:00.000Z' })),
+			cache.put('queue:last_success', JSON.stringify({ timestamp: '2026-03-03T12:06:00.000Z' })),
+			cache.put('queue:last_error', JSON.stringify({ timestamp: '2026-03-03T12:07:00.000Z', error: 'queue failed' })),
+			cache.put('stats:last_error', JSON.stringify({ timestamp: '2026-03-03T12:08:00.000Z', error: 'stats failed' })),
+		]);
+
+		const response = await SELF.fetch('https://example.com/status', {
+			headers: AUTH_HEADER,
+		});
+		expect(response.status).toBe(200);
+
+		const html = await response.text();
+		expect(html).toContain('Primary freshness');
+		expect(html).toContain('Webhook + Queue');
+		expect(html).toContain('Reconciliation');
+		expect(html).toContain('Cron sync safety net');
+		expect(html).toContain('Webhook accepted');
+		expect(html).toContain('Queue processed');
+		expect(html).toContain('Current errors');
+		expect(html).toContain('queue failed');
+		expect(html).toContain('stats failed');
+	});
 });
 
 describe('404 Handling', () => {
@@ -620,6 +834,31 @@ describe('404 Handling', () => {
 		expect(response.status).toBe(404);
 		const data = (await response.json()) as any;
 		expect(data.error).toBe('Not Found');
+	});
+});
+
+describe('/backfill', () => {
+	it('reuses an active workflow for duplicate requests with the same parameters', async () => {
+		const first = await SELF.fetch('https://example.com/backfill?days=1&resources=daily_sleep', {
+			headers: {
+				...ADMIN_HEADER,
+				'CF-Connecting-IP': nextTestIp(),
+			},
+		});
+		expect(first.status).toBe(202);
+		const firstBody = (await first.json()) as any;
+		expect(firstBody.reused).toBe(false);
+
+		const second = await SELF.fetch('https://example.com/backfill?days=1&resources=daily_sleep', {
+			headers: {
+				...ADMIN_HEADER,
+				'CF-Connecting-IP': nextTestIp(),
+			},
+		});
+		expect(second.status).toBe(202);
+		const secondBody = (await second.json()) as any;
+		expect(secondBody.instanceId).toBe(firstBody.instanceId);
+		expect(secondBody.reused).toBe(true);
 	});
 });
 

@@ -104,6 +104,10 @@ interface OuraWebhookSubscriptionModel {
 	expiration_time: string;
 }
 
+type FreshnessState = 'fresh' | 'stale' | 'unknown';
+type HealthStatusLabel = 'Operational' | 'Degraded' | 'Stale' | 'Unknown';
+type HealthStatusClass = 'ok' | 'degraded' | 'stale' | 'unknown';
+
 type JsonRecord = Record<string, unknown>;
 
 function isJsonRecord(value: unknown): value is JsonRecord {
@@ -113,6 +117,50 @@ function isJsonRecord(value: unknown): value is JsonRecord {
 function toJsonRecord(value: unknown): JsonRecord {
 	return isJsonRecord(value) ? value : {};
 }
+
+const DAILY_SUMMARY_DELETE_COLUMNS: Partial<Record<OuraWebhookDataType, string[]>> = {
+	daily_readiness: [
+		'readiness_score',
+		'readiness_activity_balance',
+		'readiness_body_temperature',
+		'readiness_hrv_balance',
+		'readiness_previous_day_activity',
+		'readiness_previous_night_sleep',
+		'readiness_recovery_index',
+		'readiness_resting_heart_rate',
+		'readiness_sleep_balance',
+	],
+	daily_sleep: [
+		'sleep_score',
+		'sleep_deep_sleep',
+		'sleep_efficiency',
+		'sleep_latency',
+		'sleep_rem_sleep',
+		'sleep_restfulness',
+		'sleep_timing',
+		'sleep_total_sleep',
+	],
+	daily_activity: [
+		'activity_score',
+		'activity_steps',
+		'activity_active_calories',
+		'activity_total_calories',
+		'activity_meet_daily_targets',
+		'activity_move_every_hour',
+		'activity_recovery_time',
+		'activity_stay_active',
+		'activity_training_frequency',
+		'activity_training_volume',
+	],
+	daily_stress: ['stress_index'],
+	daily_resilience: ['resilience_level', 'resilience_contributors_sleep', 'resilience_contributors_stress'],
+	daily_spo2: ['spo2_percentage', 'spo2_breathing_disturbance_index'],
+	daily_cardiovascular_age: ['cv_age_offset'],
+	vo2_max: ['vo2_max'],
+	sleep_time: ['sleep_time_optimal_bedtime', 'sleep_time_recommendation', 'sleep_time_status'],
+};
+
+const DAILY_SUMMARY_ALL_COLUMNS = Array.from(new Set(Object.values(DAILY_SUMMARY_DELETE_COLUMNS).flat()));
 
 async function pseudonymizeForLogs(value: string): Promise<string> {
 	const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
@@ -337,6 +385,14 @@ const SYNC_RESOURCE_CONCURRENCY = 4; // Parallel resources per sync run
 const DEFAULT_CORS_ORIGINS: string[] = [];
 const WEBHOOK_REPLAY_TTL_SECONDS = 24 * 3600; // 24 hours — must exceed Queue max retry window + DLQ re-delivery
 const WEBHOOK_MAX_CLOCK_SKEW_SECONDS_DEFAULT = 300;
+const SYNC_LAST_SUCCESS_KEY = 'sync:last_success';
+const WEBHOOK_LAST_ACCEPTED_KEY = 'webhook:last_accepted';
+const QUEUE_LAST_SUCCESS_KEY = 'queue:last_success';
+const QUEUE_LAST_ERROR_KEY = 'queue:last_error';
+const STATS_LAST_ERROR_KEY = 'stats:last_error';
+const BACKFILL_ACTIVE_INSTANCE_PREFIX = 'backfill:active:';
+const SYNC_FRESHNESS_THRESHOLD_MS = 6 * 3600_000;
+const EVENT_PIPELINE_FRESHNESS_THRESHOLD_MS = 24 * 3600_000;
 const OURA_WEBHOOK_EVENT_TYPES_DEFAULT: OuraWebhookEventType[] = ['create', 'update', 'delete'];
 const OURA_WEBHOOK_DATA_TYPES_DEFAULT: OuraWebhookDataType[] = [
 	'enhanced_tag',
@@ -451,6 +507,159 @@ async function sha256Hex(message: string): Promise<string> {
 function mapDataTypeToSingleDocPath(dataType: OuraWebhookDataType, objectId: string): string {
 	const resource = dataType === 'vo2_max' ? 'vO2_max' : dataType;
 	return `https://api.ouraring.com/v2/usercollection/${resource}/${encodeURIComponent(objectId)}`;
+}
+
+async function writeKvJson(kv: KVNamespace | undefined, key: string, value: unknown, expirationTtl: number): Promise<void> {
+	if (!kv) return;
+	await kv.put(key, JSON.stringify(value), { expirationTtl });
+}
+
+function evaluateFreshness(
+	entry: Record<string, unknown> | null,
+	thresholdMs: number,
+): {
+	timestamp: string | null;
+	ageMinutes: number | null;
+	thresholdMinutes: number;
+	state: FreshnessState;
+	isFresh: boolean;
+} {
+	const thresholdMinutes = Math.round(thresholdMs / 60000);
+	const timestamp = typeof entry?.timestamp === 'string' ? entry.timestamp : null;
+	if (!timestamp) {
+		return { timestamp: null, ageMinutes: null, thresholdMinutes, state: 'unknown', isFresh: false };
+	}
+
+	const parsed = Date.parse(timestamp);
+	if (!Number.isFinite(parsed)) {
+		return { timestamp, ageMinutes: null, thresholdMinutes, state: 'unknown', isFresh: false };
+	}
+
+	const ageMinutes = Math.max(0, Math.round((Date.now() - parsed) / 60000));
+	const isFresh = Date.now() - parsed <= thresholdMs;
+	return {
+		timestamp,
+		ageMinutes,
+		thresholdMinutes,
+		state: isFresh ? 'fresh' : 'stale',
+		isFresh,
+	};
+}
+
+function summarizeFreshnessGroup(
+	freshnessValues: Array<ReturnType<typeof evaluateFreshness>>,
+	hasError = false,
+): {
+	label: HealthStatusLabel;
+	className: HealthStatusClass;
+} {
+	if (hasError) {
+		return { label: 'Degraded', className: 'degraded' };
+	}
+
+	if (freshnessValues.some((freshness) => freshness.isFresh)) {
+		return { label: 'Operational', className: 'ok' };
+	}
+
+	if (freshnessValues.some((freshness) => freshness.state !== 'unknown')) {
+		return { label: 'Stale', className: 'stale' };
+	}
+
+	return { label: 'Unknown', className: 'unknown' };
+}
+
+function summarizePipelineStatus(args: {
+	syncFreshness: ReturnType<typeof evaluateFreshness>;
+	webhookFreshness: ReturnType<typeof evaluateFreshness>;
+	queueFreshness: ReturnType<typeof evaluateFreshness>;
+	hasQueueError: boolean;
+	hasStatsError: boolean;
+}): { label: HealthStatusLabel; className: HealthStatusClass } {
+	return summarizeFreshnessGroup(
+		[args.syncFreshness, args.webhookFreshness, args.queueFreshness],
+		args.hasQueueError || args.hasStatsError,
+	);
+}
+
+function formatFreshness(freshness: ReturnType<typeof evaluateFreshness>): string {
+	if (freshness.state === 'unknown') return 'Unknown';
+	const label = freshness.state === 'fresh' ? 'Fresh' : 'Stale';
+	if (freshness.ageMinutes === null) return `${label} (<= ${freshness.thresholdMinutes}m)`;
+	return `${label} (${freshness.ageMinutes}m, threshold ${freshness.thresholdMinutes}m)`;
+}
+
+function isWorkflowTerminalStatus(status: string): boolean {
+	return status === 'complete' || status === 'errored' || status === 'terminated';
+}
+
+function isWorkflowNotFoundErrorMessage(message: string): boolean {
+	return message.includes('not found') || message.includes('does not exist');
+}
+
+async function buildBackfillRequestKey(params: BackfillParams): Promise<string> {
+	return sha256Hex(
+		JSON.stringify({
+			totalDays: params.totalDays,
+			offsetDays: params.offsetDays,
+			resources: params.resources ?? [],
+		}),
+	);
+}
+
+async function deleteDailySummaryResource(env: Env, dataType: OuraWebhookDataType, day: string): Promise<boolean> {
+	const columns = DAILY_SUMMARY_DELETE_COLUMNS[dataType];
+	if (!columns?.length) return false;
+
+	const clearResult = await env.oura_db
+		.prepare(
+			`UPDATE daily_summaries SET ${columns.map((column) => `${column}=NULL`).join(', ')}, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE day = ?`,
+		)
+		.bind(day)
+		.run();
+
+	const deleteResult = await env.oura_db
+		.prepare(
+			`DELETE FROM daily_summaries WHERE day = ? AND ${DAILY_SUMMARY_ALL_COLUMNS.map((column) => `${column} IS NULL`).join(' AND ')}`,
+		)
+		.bind(day)
+		.run();
+
+	return (clearResult.meta.changes ?? 0) > 0 || (deleteResult.meta.changes ?? 0) > 0;
+}
+
+async function reconcileWebhookDelete(env: Env, payload: OuraWebhookQueueMessage): Promise<boolean> {
+	if (payload.dataType in DAILY_SUMMARY_DELETE_COLUMNS) {
+		return deleteDailySummaryResource(env, payload.dataType, payload.objectId);
+	}
+
+	if (payload.dataType === 'sleep') {
+		const result = await env.oura_db.prepare('DELETE FROM sleep_episodes WHERE id = ?').bind(payload.objectId).run();
+		return (result.meta.changes ?? 0) > 0;
+	}
+
+	if (payload.dataType === 'workout' || payload.dataType === 'session') {
+		const result = await env.oura_db
+			.prepare('DELETE FROM activity_logs WHERE id = ? AND type = ?')
+			.bind(payload.objectId, payload.dataType)
+			.run();
+		return (result.meta.changes ?? 0) > 0;
+	}
+
+	if (payload.dataType === 'enhanced_tag') {
+		const result = await env.oura_db.prepare('DELETE FROM enhanced_tags WHERE id = ?').bind(payload.objectId).run();
+		return (result.meta.changes ?? 0) > 0;
+	}
+
+	if (payload.dataType === 'rest_mode_period') {
+		const result = await env.oura_db.prepare('DELETE FROM rest_mode_periods WHERE id = ?').bind(payload.objectId).run();
+		return (result.meta.changes ?? 0) > 0;
+	}
+
+	console.warn('Delete webhook received for unsupported data type', {
+		dataType: payload.dataType,
+		objectId: payload.objectId,
+	});
+	return false;
 }
 
 function parseWebhookDeliveryPayload(value: unknown): OuraWebhookQueueMessage | null {
@@ -714,7 +923,7 @@ export default {
 					if (env.OURA_CACHE) {
 						try {
 							await env.OURA_CACHE.put(
-								'sync:last_success',
+								SYNC_LAST_SUCCESS_KEY,
 								JSON.stringify({
 									timestamp: new Date().toISOString(),
 									trigger: controller.cron,
@@ -817,8 +1026,45 @@ export default {
 			// Last sync status (available to all authenticated callers)
 			if (healthRole !== null && env.OURA_CACHE) {
 				try {
-					const lastSync = (await env.OURA_CACHE.get('sync:last_success', 'json')) as Record<string, unknown> | null;
+					const [lastSync, lastWebhookAccepted, lastQueueSuccess, lastStatsError, lastQueueError] = await Promise.all([
+						env.OURA_CACHE.get(SYNC_LAST_SUCCESS_KEY, 'json') as Promise<Record<string, unknown> | null>,
+						env.OURA_CACHE.get(WEBHOOK_LAST_ACCEPTED_KEY, 'json') as Promise<Record<string, unknown> | null>,
+						env.OURA_CACHE.get(QUEUE_LAST_SUCCESS_KEY, 'json') as Promise<Record<string, unknown> | null>,
+						env.OURA_CACHE.get(STATS_LAST_ERROR_KEY, 'json') as Promise<Record<string, unknown> | null>,
+						env.OURA_CACHE.get(QUEUE_LAST_ERROR_KEY, 'json') as Promise<Record<string, unknown> | null>,
+					]);
+					const syncFreshness = evaluateFreshness(lastSync, SYNC_FRESHNESS_THRESHOLD_MS);
+					const webhookFreshness = evaluateFreshness(lastWebhookAccepted, EVENT_PIPELINE_FRESHNESS_THRESHOLD_MS);
+					const queueFreshness = evaluateFreshness(lastQueueSuccess, EVENT_PIPELINE_FRESHNESS_THRESHOLD_MS);
+					const realtimeStatus = summarizeFreshnessGroup([webhookFreshness, queueFreshness], lastQueueError !== null);
+					const reconciliationStatus = summarizeFreshnessGroup([syncFreshness], lastStatsError !== null);
+					const pipelineStatus = summarizePipelineStatus({
+						syncFreshness,
+						webhookFreshness,
+						queueFreshness,
+						hasQueueError: lastQueueError !== null,
+						hasStatsError: lastStatsError !== null,
+					});
 					healthResponse.lastSync = lastSync ?? null;
+					healthResponse.pipeline = {
+						mode: {
+							primary: 'webhook_queue',
+							reconciliation: 'cron_sync',
+						},
+						status: pipelineStatus.label,
+						primaryPath: {
+							label: 'Webhook + Queue',
+							status: realtimeStatus.label,
+						},
+						reconciliationPath: {
+							label: 'Cron Reconciliation',
+							status: reconciliationStatus.label,
+						},
+						sync: { lastSuccess: lastSync ?? null, freshness: syncFreshness },
+						webhook: { lastAccepted: lastWebhookAccepted ?? null, freshness: webhookFreshness },
+						queue: { lastSuccess: lastQueueSuccess ?? null, freshness: queueFreshness, lastError: lastQueueError ?? null },
+						errors: { stats: lastStatsError ?? null },
+					};
 				} catch {
 					// Non-fatal — don't block health response
 				}
@@ -827,9 +1073,15 @@ export default {
 			// Full debug info (admin only) — includes request headers, CF properties, etc.
 			if (healthRole === 'admin') {
 				const headers: Record<string, string> = {};
+				const redactedHeaders = new Set([
+					'authorization',
+					'cookie',
+					'cf-access-client-id',
+					'cf-access-client-secret',
+					'cf-access-jwt-assertion',
+				]);
 				request.headers.forEach((value, key) => {
-					// Strip sensitive headers even for admin (they don't need to round-trip auth tokens)
-					if (!['authorization', 'cookie'].includes(key.toLowerCase())) {
+					if (!redactedHeaders.has(key.toLowerCase())) {
 						headers[key] = value;
 					}
 				});
@@ -1022,6 +1274,26 @@ export default {
 					}
 				}
 
+				if (accepted > 0) {
+					try {
+						await writeKvJson(
+							env.OURA_CACHE,
+							WEBHOOK_LAST_ACCEPTED_KEY,
+							{
+								timestamp: new Date().toISOString(),
+								accepted,
+								duplicate,
+								ignored,
+							},
+							86400 * 7,
+						);
+					} catch (err) {
+						console.warn('Failed to persist webhook acceptance state', {
+							error: err instanceof Error ? err.message : String(err),
+						});
+					}
+				}
+
 				return cors(Response.json({ accepted, duplicate, ignored }, { status: 202 }));
 			}
 
@@ -1129,33 +1401,66 @@ export default {
 			// The Workflow runs each resource as an isolated step with its own retry budget,
 			// eliminating CPU/subrequest limit concerns for large backfills.
 			try {
+				const resources = resourceFilter ? [...resourceFilter].sort() : undefined;
 				const params: BackfillParams = {
 					totalDays,
 					offsetDays,
-					resources: resourceFilter ? [...resourceFilter] : undefined,
+					resources,
 				};
+				const requestKey = await buildBackfillRequestKey(params);
+				const activeKey = `${BACKFILL_ACTIVE_INSTANCE_PREFIX}${requestKey}`;
+				let instanceId: string | null = env.OURA_CACHE ? await env.OURA_CACHE.get(activeKey) : null;
+				let reused = false;
+				let instance;
 
-				// Use a deterministic ID so duplicate requests within the rate limit window
-				// are idempotent (Workflow.create throws if the ID already exists)
-				const instanceId = `backfill-${totalDays}d-offset${offsetDays}-${Date.now()}`;
+				if (instanceId) {
+					try {
+						const existing = await env.BACKFILL_WORKFLOW.get(instanceId);
+						const status = await existing.status();
+						if (!isWorkflowTerminalStatus(status.status)) {
+							instance = existing;
+							reused = true;
+						} else {
+							instanceId = null;
+						}
+					} catch (err) {
+						const message = err instanceof Error ? err.message : String(err);
+						if (isWorkflowNotFoundErrorMessage(message)) {
+							instanceId = null;
+						} else {
+							throw err;
+						}
+					}
+				}
 
-				const instance = await env.BACKFILL_WORKFLOW.create({
-					id: instanceId,
-					params,
-				});
+				if (!instanceId) {
+					instanceId = `backfill-${totalDays}d-offset${offsetDays}-${Date.now()}`;
+				}
+
+				if (!instance) {
+					instance = await env.BACKFILL_WORKFLOW.create({
+						id: instanceId,
+						params,
+					});
+					if (env.OURA_CACHE) {
+						await env.OURA_CACHE.put(activeKey, instance.id, { expirationTtl: 86400 });
+					}
+				}
 
 				console.log('Backfill workflow dispatched', {
 					instanceId: instance.id,
 					totalDays,
 					offsetDays,
-					resourceFilter: resourceFilter ? [...resourceFilter] : 'all',
+					resourceFilter: resources ?? 'all',
+					reused,
 				});
 
 				return cors(
 					Response.json(
 						{
-							message: 'Backfill workflow started.',
+							message: reused ? 'Backfill workflow already active for these parameters.' : 'Backfill workflow started.',
 							instanceId: instance.id,
+							reused,
 							statusUrl: `/backfill/status?id=${encodeURIComponent(instance.id)}`,
 							totalDays,
 							offsetDays,
@@ -1202,8 +1507,7 @@ export default {
 				);
 			} catch (err) {
 				const message = err instanceof Error ? err.message : String(err);
-				// Workflow.get throws if the instance doesn't exist
-				const isNotFound = message.includes('not found') || message.includes('does not exist');
+				const isNotFound = isWorkflowNotFoundErrorMessage(message);
 				return cors(
 					Response.json(
 						{
@@ -1815,9 +2119,21 @@ export default {
 		// Status page — requires auth (same as all endpoints below the auth gate)
 		if (url.pathname === '/status') {
 			try {
-				const [lastSync, statsResult] = await Promise.all([
+				const [lastSync, lastWebhookAccepted, lastQueueSuccess, lastQueueError, lastStatsError, statsResult] = await Promise.all([
 					env.OURA_CACHE
-						? (env.OURA_CACHE.get('sync:last_success', 'json') as Promise<Record<string, unknown> | null>)
+						? (env.OURA_CACHE.get(SYNC_LAST_SUCCESS_KEY, 'json') as Promise<Record<string, unknown> | null>)
+						: Promise.resolve(null),
+					env.OURA_CACHE
+						? (env.OURA_CACHE.get(WEBHOOK_LAST_ACCEPTED_KEY, 'json') as Promise<Record<string, unknown> | null>)
+						: Promise.resolve(null),
+					env.OURA_CACHE
+						? (env.OURA_CACHE.get(QUEUE_LAST_SUCCESS_KEY, 'json') as Promise<Record<string, unknown> | null>)
+						: Promise.resolve(null),
+					env.OURA_CACHE
+						? (env.OURA_CACHE.get(QUEUE_LAST_ERROR_KEY, 'json') as Promise<Record<string, unknown> | null>)
+						: Promise.resolve(null),
+					env.OURA_CACHE
+						? (env.OURA_CACHE.get(STATS_LAST_ERROR_KEY, 'json') as Promise<Record<string, unknown> | null>)
 						: Promise.resolve(null),
 					env.oura_db.prepare('SELECT resource, record_count, max_day, updated_at FROM table_stats ORDER BY resource').all(),
 				]);
@@ -1828,9 +2144,21 @@ export default {
 					max_day: string | null;
 					updated_at: string | null;
 				}>;
-				const isHealthy = lastSync !== null;
+				const syncFreshness = evaluateFreshness(lastSync, SYNC_FRESHNESS_THRESHOLD_MS);
+				const webhookFreshness = evaluateFreshness(lastWebhookAccepted, EVENT_PIPELINE_FRESHNESS_THRESHOLD_MS);
+				const queueFreshness = evaluateFreshness(lastQueueSuccess, EVENT_PIPELINE_FRESHNESS_THRESHOLD_MS);
+				const realtimeStatus = summarizeFreshnessGroup([webhookFreshness, queueFreshness], lastQueueError !== null);
+				const reconciliationStatus = summarizeFreshnessGroup([syncFreshness], lastStatsError !== null);
+				const pipelineStatus = summarizePipelineStatus({
+					syncFreshness,
+					webhookFreshness,
+					queueFreshness,
+					hasQueueError: lastQueueError !== null,
+					hasStatsError: lastStatsError !== null,
+				});
 				const lastSyncTime = lastSync?.timestamp as string | undefined;
-				const lastSyncAgo = lastSyncTime ? Math.round((Date.now() - new Date(lastSyncTime).getTime()) / 60000) : null;
+				const lastWebhookAcceptedTime = lastWebhookAccepted?.timestamp as string | undefined;
+				const lastQueueSuccessTime = lastQueueSuccess?.timestamp as string | undefined;
 
 				const tableRows = stats.length
 					? stats
@@ -1840,6 +2168,19 @@ export default {
 							)
 							.join('\n')
 					: '\t\t\t<tr><td colspan="3"><em>No stats available — run a sync first</em></td></tr>';
+
+				const signalRows = [
+					`<tr><td>Cron reconciliation</td><td>${escapeHtml(formatFreshness(syncFreshness))}</td><td>${escapeHtml(lastSyncTime ?? '—')}</td></tr>`,
+					`<tr><td>Webhook accepted</td><td>${escapeHtml(formatFreshness(webhookFreshness))}</td><td>${escapeHtml(lastWebhookAcceptedTime ?? '—')}</td></tr>`,
+					`<tr><td>Queue processed</td><td>${escapeHtml(formatFreshness(queueFreshness))}</td><td>${escapeHtml(lastQueueSuccessTime ?? '—')}</td></tr>`,
+				].join('\n');
+
+				const errorItems = [
+					lastQueueError ? `<li>Queue: ${escapeHtml(String(lastQueueError.error ?? 'Unknown error'))}</li>` : '',
+					lastStatsError ? `<li>Stats: ${escapeHtml(String(lastStatsError.error ?? 'Unknown error'))}</li>` : '',
+				]
+					.filter(Boolean)
+					.join('');
 
 				const html = `<!DOCTYPE html>
 <html lang="en">
@@ -1852,25 +2193,42 @@ export default {
 		h1 { font-size: 1.4rem; margin-bottom: 0.25rem; }
 		.badge { display: inline-block; padding: 0.2rem 0.6rem; border-radius: 4px; font-size: 0.85rem; font-weight: 600; }
 		.ok { background: #d1fae5; color: #065f46; }
+		.degraded { background: #fee2e2; color: #991b1b; }
+		.stale { background: #fef3c7; color: #92400e; }
 		.unknown { background: #fef3c7; color: #92400e; }
 		table { width: 100%; border-collapse: collapse; margin-top: 1rem; font-size: 0.9rem; }
 		th, td { padding: 0.45rem 0.6rem; border: 1px solid #e5e7eb; text-align: left; }
 		th { background: #f9fafb; font-weight: 600; }
 		.meta { color: #6b7280; font-size: 0.8rem; margin-top: 1.5rem; }
+		.errors { margin-top: 1rem; color: #991b1b; }
 	</style>
 </head>
 <body>
 	<h1>💍 Oura Data Pipeline</h1>
 	<p>
-		Status: <span class="badge ${isHealthy ? 'ok' : 'unknown'}">${isHealthy ? 'Operational' : 'Unknown'}</span>
-		${lastSyncTime ? `&nbsp;&nbsp;Last sync: ${lastSyncAgo !== null ? `${lastSyncAgo}m ago` : escapeHtml(lastSyncTime)}` : '&nbsp;&nbsp;No sync recorded yet'}
+		Overall status: <span class="badge ${pipelineStatus.className}">${pipelineStatus.label}</span>
 	</p>
+	<p>
+		Primary freshness: <span class="badge ${realtimeStatus.className}">${realtimeStatus.label}</span>
+		&nbsp;&nbsp;Webhook + Queue
+	</p>
+	<p>
+		Reconciliation: <span class="badge ${reconciliationStatus.className}">${reconciliationStatus.label}</span>
+		&nbsp;&nbsp;Cron sync safety net
+	</p>
+	<table>
+		<thead><tr><th>Signal</th><th>Freshness</th><th>Timestamp</th></tr></thead>
+		<tbody>
+${signalRows}
+		</tbody>
+	</table>
 	<table>
 		<thead><tr><th>Table</th><th>Records</th><th>Latest Day</th></tr></thead>
 		<tbody>
 ${tableRows}
 		</tbody>
 	</table>
+	${errorItems ? `<div class="errors"><strong>Current errors</strong><ul>${errorItems}</ul></div>` : ''}
 	<p class="meta">v${__APP_VERSION__} &nbsp;·&nbsp; Sync: ${SYNC_SCHEDULE_DISPLAY} &nbsp;·&nbsp; <a href="/health">health</a></p>
 </body>
 </html>`;
@@ -1894,6 +2252,8 @@ ${tableRows}
 
 	async queue(batch: MessageBatch<OuraWebhookQueueMessage>, env: Env, ctx: ExecutionContext): Promise<void> {
 		let wroteData = false;
+		let lastQueueSuccess: Record<string, unknown> | null = null;
+		let lastQueueError: Record<string, unknown> | null = null;
 
 		for (const message of batch.messages) {
 			const payload = message.body;
@@ -1904,7 +2264,32 @@ ${tableRows}
 			}
 
 			if (payload.eventType === 'delete') {
-				message.ack();
+				try {
+					const changed = await reconcileWebhookDelete(env, payload);
+					wroteData = wroteData || changed;
+					lastQueueSuccess = {
+						timestamp: new Date().toISOString(),
+						eventType: payload.eventType,
+						dataType: payload.dataType,
+						objectId: payload.objectId,
+						changed,
+					};
+					message.ack();
+				} catch (err) {
+					console.error('Webhook delete reconciliation failed', {
+						messageId: message.id,
+						attempts: message.attempts,
+						error: err instanceof Error ? err.message : String(err),
+					});
+					lastQueueError = {
+						timestamp: new Date().toISOString(),
+						eventType: payload.eventType,
+						dataType: payload.dataType,
+						objectId: payload.objectId,
+						error: err instanceof Error ? err.message : String(err),
+					};
+					message.retry({ delaySeconds: Math.min(300, message.attempts * 30) });
+				}
 				continue;
 			}
 
@@ -1948,6 +2333,13 @@ ${tableRows}
 
 				await saveToD1(env, payload.dataType, [json]);
 				wroteData = true;
+				lastQueueSuccess = {
+					timestamp: new Date().toISOString(),
+					eventType: payload.eventType,
+					dataType: payload.dataType,
+					objectId: payload.objectId,
+					changed: true,
+				};
 				message.ack();
 			} catch (err) {
 				console.error('Webhook queue processing failed', {
@@ -1955,7 +2347,25 @@ ${tableRows}
 					attempts: message.attempts,
 					error: err instanceof Error ? err.message : String(err),
 				});
+				lastQueueError = {
+					timestamp: new Date().toISOString(),
+					eventType: payload.eventType,
+					dataType: payload.dataType,
+					objectId: payload.objectId,
+					error: err instanceof Error ? err.message : String(err),
+				};
 				message.retry({ delaySeconds: Math.min(300, message.attempts * 30) });
+			}
+		}
+
+		if (env.OURA_CACHE) {
+			if (lastQueueSuccess) {
+				ctx.waitUntil(writeKvJson(env.OURA_CACHE, QUEUE_LAST_SUCCESS_KEY, lastQueueSuccess, 86400 * 7));
+			}
+			if (lastQueueError) {
+				ctx.waitUntil(writeKvJson(env.OURA_CACHE, QUEUE_LAST_ERROR_KEY, lastQueueError, 86400 * 7));
+			} else if (lastQueueSuccess) {
+				ctx.waitUntil(env.OURA_CACHE.delete(QUEUE_LAST_ERROR_KEY));
 			}
 		}
 
@@ -3247,6 +3657,16 @@ async function updateTableStats(env: Env, { force = false }: { force?: boolean }
 			await batchInChunks(env.oura_db, updateStatements);
 		}
 
+		if (env.OURA_CACHE) {
+			try {
+				await env.OURA_CACHE.delete(STATS_LAST_ERROR_KEY);
+			} catch (err) {
+				console.warn('Failed to clear stats error state', {
+					error: err instanceof Error ? err.message : String(err),
+				});
+			}
+		}
+
 		// Record the update timestamp so future cron ticks can skip the refresh
 		if (env.OURA_CACHE) {
 			try {
@@ -3268,7 +3688,7 @@ async function updateTableStats(env: Env, { force = false }: { force?: boolean }
 		if (env.OURA_CACHE) {
 			try {
 				await env.OURA_CACHE.put(
-					'stats:last_error',
+					STATS_LAST_ERROR_KEY,
 					JSON.stringify({ error: errorMsg, timestamp: new Date().toISOString() }),
 					{ expirationTtl: 86400 }, // 24h TTL — auto-clears if stats recover
 				);

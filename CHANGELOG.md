@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.3] - 2026-04-16
+
+### Fixed
+
+- **Webhook delete reconciliation**: queue processing now removes or nulls deleted Oura records in D1 instead of acknowledging `delete` events and leaving stale data behind.
+- **Backfill duplicate dispatches**: `/backfill` now reuses an active workflow for the same parameter set instead of always creating a new instance.
+
+### Added
+
+- **Pipeline freshness signals**: `/health` and `/status` now track webhook acceptance, queue processing, reconciliation freshness, and persisted error state separately.
+- **Freshness thresholds**: health/status classify signals as `Operational`, `Degraded`, `Stale`, or `Unknown` based on recency instead of showing timestamps only.
+- **Coverage for health/status and workflow reuse**: added tests for stale/fresh signal handling, delete reconciliation, and backfill idempotency.
+
+### Changed
+
+- **Operational wording**: `/health` and `/status` now make the architecture explicit: webhook + queue is the primary freshness path, cron sync is the reconciliation safety net.
+
+### Repository
+
+- **Docs sync**: updated `README.md`, `docs/RUNBOOK.md`, and `docs/KNOWN_ISSUES.md` to match the current webhook-first operating model and repository test counts.
+
 ## [2.1.2] - 2026-04-13
 
 ### Fixed

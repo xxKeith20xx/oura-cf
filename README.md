@@ -697,9 +697,11 @@ The project uses Vitest with `@cloudflare/vitest-pool-workers` for testing again
 npm test          # Watch mode
 npm run test:run  # Single run
 
-# 62 tests (60 passing, 2 skipped)
-# Coverage: auth, SQL injection (including quoted identifier bypass), param validation, LIMIT capping,
-#           CORS origins, daily_summaries, 404 handling, root endpoint
+# 68 tests (66 passing, 2 skipped)
+# Coverage: auth, health/status signals and freshness thresholds, SQL injection
+#           (including quoted identifier bypass), param validation, LIMIT capping,
+#           CORS origins, webhook queue reconciliation, backfill idempotency,
+#           daily_summaries, 404 handling, root endpoint
 ```
 
 ### Project Structure
@@ -709,7 +711,7 @@ oura-cf/
 ├── src/
 │   └── index.ts              # Main Worker + BackfillWorkflow (3,000+ lines)
 ├── test/
-│   └── index.spec.ts         # 57 tests
+│   └── index.spec.ts         # 68 tests
 ├── migrations/
 │   ├── 0001_init.sql         # Core tables
 │   ├── 0002_oauth_tokens.sql # OAuth token storage
