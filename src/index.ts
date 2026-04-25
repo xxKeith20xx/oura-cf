@@ -380,7 +380,7 @@ const MAX_QUERY_TIMEOUT_MS = 15_000; // Clamp to avoid excessively long-running 
 const MAX_PARAMS = 100; // Maximum SQL parameters
 const MAX_BODY_SIZE = 1_048_576; // 1MB max request body size
 const MAX_COMPOUND_SELECT_TERMS = 5;
-const SYNC_SCHEDULE_DISPLAY = 'Every 2 hours (0 */2 * * * UTC)';
+const SYNC_SCHEDULE_DISPLAY = 'Twice daily at 07:00 and 14:00 UTC (0 7 * * *, 0 14 * * *)';
 const SYNC_RESOURCE_CONCURRENCY = 4; // Parallel resources per sync run
 const DEFAULT_CORS_ORIGINS: string[] = [];
 const WEBHOOK_REPLAY_TTL_SECONDS = 24 * 3600; // 24 hours — must exceed Queue max retry window + DLQ re-delivery
@@ -918,7 +918,7 @@ export default {
 			retryWithBackoff(
 				async () => {
 					const syncStart = Date.now();
-					await syncData(env, 3, 0, null);
+					await syncData(env, 1, 0, null);
 					await updateTableStats(env);
 					if (env.OURA_CACHE) {
 						try {
@@ -2391,7 +2391,11 @@ ${tableRows}
 async function syncData(env: Env, totalDays: number, offsetDays = 0, resourceFilter: Set<string> | null = null) {
 	const syncStartTime = Date.now();
 	const resourcesAll = await loadOuraResourcesFromOpenApi(env);
-	const resources = resourceFilter ? resourcesAll.filter((r) => resourceFilter.has(r.resource)) : resourcesAll;
+	// Only sync resources that have a D1 handler. Unknown resources discovered from the
+	// OpenAPI spec (e.g. interbeat_interval) would be fetched from Oura but silently
+	// discarded by saveToD1, wasting subrequests and causing transient cron failures.
+	const resourcesKnown = resourcesAll.filter((r) => KNOWN_ENDPOINTS.has(RESOURCE_ALIASES[r.resource] ?? r.resource));
+	const resources = resourceFilter ? resourcesKnown.filter((r) => resourceFilter.has(r.resource)) : resourcesKnown;
 
 	// Process resources with bounded concurrency to avoid API/database bursts.
 	const results = await mapWithConcurrency(resources, SYNC_RESOURCE_CONCURRENCY, async (r) => {
