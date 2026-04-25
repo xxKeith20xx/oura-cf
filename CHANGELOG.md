@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.4] - 2026-04-25
+
+### Changed
+
+- **Cron schedule**: reduced from every 2 hours (12×/day) to twice daily at 07:00 and 14:00 UTC, cutting cron-driven D1 writes by ~83%.
+- **Sync window**: reduced from 3 days to 1 day per cron run; webhooks + queue remain the primary freshness path, cron is the reconciliation safety net.
+- **Resource filtering**: `syncData` now filters discovered OpenAPI resources to only those with a D1 handler (`KNOWN_ENDPOINTS`) before fetching from the Oura API, eliminating wasted subrequests and the recurring `interbeat_interval` `scriptThrewException` errors.
+
+### Fixed
+
+- **Cron `scriptThrewException` errors**: caused by `interbeat_interval` and other undhandled resources being fetched and then discarded — now excluded before any Oura API calls are made.
+- **`exceededResources` errors**: fewer concurrent Oura API subrequests per cron run (15 known resources vs ~20 discovered) brings runs well under Worker subrequest limits.
+
 ## [2.1.3] - 2026-04-16
 
 ### Fixed

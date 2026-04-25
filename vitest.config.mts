@@ -19,7 +19,7 @@ export default defineConfig({
 		}),
 	],
 	define: {
-		__APP_VERSION__: JSON.stringify('2.1.3'),
+		__APP_VERSION__: JSON.stringify('2.1.4'),
 	},
 	test: {},
 });
